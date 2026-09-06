@@ -1,0 +1,14 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.idea/
+*.iml
+*.jks
+*.keystore
+test-output/
+*.log
+.testenv/
+__pycache__/
+*.pyc
+releases/*.apk
