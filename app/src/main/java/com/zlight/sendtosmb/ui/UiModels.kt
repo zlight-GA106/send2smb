@@ -28,6 +28,9 @@ data class UiTransfer(
     val total: Long = 0,
     val status: String = "queued",
     val error: String? = null,
+    val createdMillis: Long = System.currentTimeMillis(),
+    val sourceFile: UiFile? = null,
+    val profileId: String? = null,
 )
 
 data class UiState(
@@ -53,7 +56,7 @@ sealed interface UiAction {
     data class Navigate(val path: String) : UiAction
     data object Refresh : UiAction
     data object Upload : UiAction
-    data class Download(val files: List<UiFile>) : UiAction
+    data class Download(val files: List<UiFile>, val profileId: String? = null) : UiAction
     data class CreateFolder(val name: String) : UiAction
     data class Rename(val file: UiFile, val newName: String) : UiAction
     data class Delete(val files: List<UiFile>) : UiAction

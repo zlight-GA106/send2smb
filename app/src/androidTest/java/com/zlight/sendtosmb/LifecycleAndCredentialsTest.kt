@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModelStoreOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.zlight.sendtosmb.ui.UiProfile
+import com.zlight.sendtosmb.ui.UiFile
+import com.zlight.sendtosmb.ui.UiTransfer
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -54,6 +56,21 @@ class LifecycleAndCredentialsTest {
             instrumentation.runOnMainSync { owner.viewModelStore.clear() }
             store.write(previous.first, previous.second)
         }
+    }
+
+    @Test fun completedDownloadHistoryIsEncryptedAndRestored() {
+        val transferStore = TransferStore(app)
+        val previous = transferStore.read()
+        val source = UiFile("private-report.pdf", "Documents/private-report.pdf", false, 4096)
+        val transfer = UiTransfer("history-encryption-test", source.name, "download", 4096, 4096,
+            "completed", sourceFile = source, profileId = "profile-for-repeat")
+        try {
+            transferStore.write(listOf(transfer))
+            assertEquals(transfer, transferStore.read().single())
+            val persisted = app.getSharedPreferences("transfer_history", 0).all.values.joinToString()
+            assertFalse(persisted.contains(source.name))
+            assertFalse(persisted.contains(source.path))
+        } finally { transferStore.write(previous) }
     }
 
     private fun await(condition: () -> Boolean) {

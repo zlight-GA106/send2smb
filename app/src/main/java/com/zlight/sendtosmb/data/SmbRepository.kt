@@ -157,19 +157,31 @@ class SmbRepository : Closeable {
     }
 
     fun download(path: String, output: OutputStream, cancelled: () -> Boolean = { false },
-                 onProgress: (Long, Long) -> Unit = { _, _ -> }) {
+                 onProgress: (Long, Long) -> Unit = { _, _ -> }, expectedBytes: Long = -1) {
         val state = state()
         requireChild(path)
         val disk = share(state)
-        disk.openFile(state.address.resolve(path), EnumSet.of(AccessMask.FILE_READ_DATA, AccessMask.FILE_READ_ATTRIBUTES),
-            null, SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OPEN, null).use { file ->
-            val total = file.getFileInformation(FileStandardInformation::class.java).endOfFile
+        val resolved = state.address.resolve(path)
+        val file = try {
+            disk.openFile(resolved, EnumSet.of(AccessMask.FILE_READ_DATA, AccessMask.FILE_READ_ATTRIBUTES),
+                null, SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OPEN, null)
+        } catch (error: SMBApiException) {
+            // Some shares grant file contents without FILE_READ_ATTRIBUTES. The directory entry
+            // already supplied the size, so retry with the smallest permission needed to download.
+            if (error.statusCode != STATUS_ACCESS_DENIED) throw error
+            disk.openFile(resolved, EnumSet.of(AccessMask.FILE_READ_DATA),
+                null, SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OPEN, null)
+        }
+        file.use {
+            val total = runCatching { it.getFileInformation(FileStandardInformation::class.java).endOfFile }
+                .getOrDefault(expectedBytes)
             val buffer = ByteArray(BUFFER_SIZE)
             var done = 0L
             onProgress(0, total)
-            while (done < total) {
+            while (total < 0 || done < total) {
                 checkActive(state, cancelled)
-                val count = file.read(buffer, done, 0, minOf(buffer.size.toLong(), total - done).toInt())
+                val length = if (total >= 0) minOf(buffer.size.toLong(), total - done).toInt() else buffer.size
+                val count = it.read(buffer, done, 0, length)
                 if (count < 0) break
                 if (count == 0) throw IOException("服务器未返回文件数据")
                 output.write(buffer, 0, count)
@@ -177,7 +189,7 @@ class SmbRepository : Closeable {
                 onProgress(done, total)
             }
             checkActive(state, cancelled)
-            if (done != total) throw IOException("远程文件在下载期间发生变化，请重试")
+            if (total >= 0 && done != total) throw IOException("远程文件在下载期间发生变化，请重试")
             output.flush()
             onProgress(done, total)
         }
@@ -341,5 +353,8 @@ class SmbRepository : Closeable {
             open(InetSocketAddress(host, port), InetSocketAddress(localHost, localPort))
     }
 
-    companion object { private const val BUFFER_SIZE = 256 * 1024 }
+    companion object {
+        private const val BUFFER_SIZE = 256 * 1024
+        private const val STATUS_ACCESS_DENIED = 0xC0000022L
+    }
 }

@@ -24,18 +24,25 @@ class MainActivity : ComponentActivity() {
     private val model: ExplorerViewModel by viewModels()
     private var uploadPath = ""
     private var downloadFiles = emptyList<UiFile>()
+    private var downloadProfileId: String? = null
     private val uploadPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) lifecycleScope.launch { lifecycle.withResumed { model.upload(uris, uploadPath) } }
     }
     private val downloadPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         val files = downloadFiles.toList()
-        if (uri != null && files.isNotEmpty()) lifecycleScope.launch { lifecycle.withResumed { model.download(files, uri) } }
+        val profileId = downloadProfileId
+        if (uri != null && files.isNotEmpty()) {
+            runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+            lifecycleScope.launch { lifecycle.withResumed { model.download(files, uri, profileId) } }
+        }
         downloadFiles = emptyList()
+        downloadProfileId = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         uploadPath = savedInstanceState?.getString("uploadPath").orEmpty()
+        downloadProfileId = savedInstanceState?.getString("downloadProfileId")
         savedInstanceState?.getString("downloadFiles")?.let { json ->
             runCatching {
                 val array = JSONArray(json)
@@ -58,6 +65,7 @@ class MainActivity : ComponentActivity() {
                     }
                     is UiAction.Download -> {
                         downloadFiles = action.files
+                        downloadProfileId = action.profileId ?: state.currentProfileId
                         downloadPicker.launch(null)
                     }
                     UiAction.OpenWifiSettings -> startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
@@ -72,6 +80,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("uploadPath", uploadPath)
+        outState.putString("downloadProfileId", downloadProfileId)
         val array = JSONArray()
         downloadFiles.forEach { array.put(JSONObject().put("name", it.name).put("path", it.path)
             .put("directory", it.isDirectory).put("size", it.size).put("modified", it.modifiedMillis)) }

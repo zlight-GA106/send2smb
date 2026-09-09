@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.automirrored.outlined.ViewList
@@ -72,13 +71,13 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
     Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 28.dp else 20.dp)) {
         if (!keyboardVisible) {
             Spacer(Modifier.height(16.dp))
-            PageHeading("文件", if (state.connected) currentProfile?.name ?: "共享文件夹" else "你的文件，在每一台设备之间") {
+            PageHeading("文件管理", if (state.connected) currentProfile?.name ?: "共享文件夹" else "连接后管理共享文件") {
                 if (state.connected) ToolIcon(Icons.Outlined.Refresh, "刷新文件夹", enabled = !state.loading) { onAction(UiAction.Refresh) }
             }
             Spacer(Modifier.height(18.dp))
         }
         if (!state.connected) {
-            DisconnectedExplorer(state, currentProfile, wide, onAction, onConnect)
+            FileManagerDisconnected(state, onAction, onConnect)
         } else {
             if (!keyboardVisible && wide) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -92,7 +91,7 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
             }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                placeholder = { Text("搜索此文件夹", style = MaterialTheme.typography.bodyMedium) },
+                placeholder = { Text("搜索文件或文件夹", style = MaterialTheme.typography.bodyMedium) },
                 leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(20.dp)) },
                 trailingIcon = { if (search.isNotEmpty()) ToolIcon(Icons.Outlined.Close, "清除搜索") { search = "" } },
                 singleLine = true, shape = Fluent.Control,
@@ -177,58 +176,20 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
 }
 
 @Composable
-private fun DisconnectedExplorer(state: UiState, profile: UiProfile?, wide: Boolean, onAction: (UiAction) -> Unit, onConnect: () -> Unit) {
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        FluentCard(Modifier.fillMaxWidth()) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = if (wide) 36.dp else 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.width(154.dp).height(96.dp), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(90.dp).clip(Fluent.Radius).background(Fluent.BlueTint), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.FolderOpen, null, Modifier.size(52.dp), tint = Fluent.Blue)
-                    }
-                    Surface(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).size(36.dp), shape = Fluent.Control, color = Color.White, border = BorderStroke(1.dp, Fluent.Border), shadowElevation = 2.dp) {
-                        Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Wifi, null, Modifier.size(20.dp), tint = Fluent.Blue) }
-                    }
-                }
-                Spacer(Modifier.height(22.dp))
-                Text(if (state.connecting) "正在连接你的文件" else "连接，让文件触手可及", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(10.dp))
-                Text(if (state.connecting) "正在与共享设备建立安全会话…" else "访问电脑与 NAS 的共享文件夹\n上传、下载，像在资源管理器中一样自在。", style = MaterialTheme.typography.bodyMedium, color = Fluent.Secondary, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(24.dp))
-                if (state.connecting) {
-                    CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp)
-                    TextButton(onClick = { onAction(UiAction.Disconnect) }) { Text("取消连接") }
-                } else PrimaryButton(if (state.profiles.isEmpty()) "添加网络位置" else "连接共享文件夹", Icons.Outlined.AddLink, onClick = onConnect)
+private fun FileManagerDisconnected(state: UiState, onAction: (UiAction) -> Unit, onConnect: () -> Unit) {
+    FluentCard(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            AccentIcon(Icons.Outlined.FolderOff, 68)
+            Spacer(Modifier.height(20.dp))
+            Text(if (state.connecting) "正在连接共享文件夹" else "连接后管理共享文件", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(22.dp))
+            if (state.connecting) {
+                CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp)
+                TextButton(onClick = { onAction(UiAction.Disconnect) }) { Text("取消连接") }
+            } else {
+                PrimaryButton(if (state.profiles.isEmpty()) "添加网络位置" else "前往连接", Icons.Outlined.AddLink, onClick = onConnect)
             }
         }
-        if (profile != null && !state.connecting) {
-            FluentCard(Modifier.fillMaxWidth()) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AccentIcon(Icons.Outlined.Computer, 40)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("上次连接", style = MaterialTheme.typography.bodySmall, color = Fluent.Muted)
-                        Text(profile.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    TextButton(onClick = { onAction(UiAction.Connect(profile.id)) }) { Text("重新连接") }
-                }
-            }
-        }
-        CapacityCard(null, "网络存储空间", false, Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            IntroFeature(Icons.Outlined.Lock, "本机加密凭据")
-            IntroFeature(Icons.Outlined.SwapVert, "双向文件传输")
-            IntroFeature(Icons.Outlined.Devices, "手机与平板")
-        }
-        Spacer(Modifier.height(4.dp))
-    }
-}
-
-@Composable
-private fun IntroFeature(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, null, Modifier.size(20.dp), tint = Fluent.Secondary)
-        Spacer(Modifier.height(7.dp))
-        Text(title, style = MaterialTheme.typography.labelSmall, color = Fluent.Secondary)
     }
 }
 

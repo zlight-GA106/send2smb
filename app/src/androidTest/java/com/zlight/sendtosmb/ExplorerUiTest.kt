@@ -34,7 +34,8 @@ class ExplorerUiTest {
         val files = listOf(UiFile("Documents", "Documents", true), UiFile("notes.txt", "notes.txt", false, 1024))
         compose.setContent { SendToSmbApp(UiState(profiles = listOf(profile), currentProfileId = profile.id,
             connected = true, files = files, capacity = UiCapacity(1_000_000, 500_000)), actions::add) }
-        compose.onNodeWithText("搜索此文件夹").performTextInput("notes")
+        compose.onNodeWithText("文件管理").performClick()
+        compose.onNodeWithText("搜索文件或文件夹").performTextInput("notes")
         compose.onNodeWithText("notes.txt").assertIsDisplayed()
         compose.onAllNodesWithText("Documents").assertCountEquals(0)
         compose.onNodeWithContentDescription("清除搜索").performClick()
@@ -47,5 +48,27 @@ class ExplorerUiTest {
         compose.runOnIdle { assertTrue(actions.none { it is UiAction.Delete }) }
         compose.onNodeWithText("Documents").performClick()
         compose.runOnIdle { assertTrue(actions.contains(UiAction.Navigate("Documents"))) }
+    }
+
+    @Test fun homeAndFileManagerAreSeparateAndDownloadHistoryCanRepeat() {
+        val actions = mutableListOf<UiAction>()
+        val profile = UiProfile("history-profile", "测试共享", "smb://127.0.0.1:1445/TESTSHARE")
+        val source = UiFile("report.pdf", "Documents/report.pdf", false, 2048)
+        val history = UiTransfer("history-download", source.name, "download", 2048, 2048, "completed",
+            sourceFile = source, profileId = profile.id)
+        compose.setContent { SendToSmbApp(UiState(profiles = listOf(profile), currentProfileId = profile.id,
+            connected = true, transfers = listOf(history)), actions::add) }
+
+        compose.onNodeWithText("打开文件管理").assertIsDisplayed()
+        compose.onNodeWithText("打开文件管理").performClick()
+        compose.onNodeWithText("搜索文件或文件夹").assertIsDisplayed()
+        compose.onNodeWithText("传输").performClick()
+        compose.onNodeWithText("传输记录默认保存在本机").assertIsDisplayed()
+        compose.onNodeWithText("再次下载").performClick()
+        compose.runOnIdle {
+            val repeated = actions.filterIsInstance<UiAction.Download>().single()
+            assertEquals(listOf(source), repeated.files)
+            assertEquals(profile.id, repeated.profileId)
+        }
     }
 }

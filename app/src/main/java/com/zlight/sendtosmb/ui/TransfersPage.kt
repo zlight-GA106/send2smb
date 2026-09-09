@@ -18,7 +18,7 @@ internal fun TransfersPage(state: UiState, wide: Boolean, onAction: (UiAction) -
     val history = state.transfers.filterNot { it.status == "running" || it.status == "queued" }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = if (wide) 28.dp else 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            PageHeading("传输", if (active.isEmpty()) "文件流转，每一步都清楚" else "${active.size} 个任务正在进行") {
+            PageHeading("传输", if (active.isEmpty()) "传输记录默认保存在本机" else "${active.size} 个任务正在进行") {
                 if (history.isNotEmpty()) ToolIcon(Icons.Outlined.DeleteSweep, "清空传输记录") { onAction(UiAction.ClearCompletedTransfers) }
             }
         }
@@ -34,9 +34,13 @@ internal fun TransfersPage(state: UiState, wide: Boolean, onAction: (UiAction) -
             }
         }
         if (active.isNotEmpty()) item { Text("正在传输 · ${active.size}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.titleSmall, color = Fluent.Secondary) }
-        items(active, key = { it.id }) { transfer -> TransferCard(transfer) { onAction(UiAction.CancelTransfer(transfer.id)) } }
+        items(active, key = { it.id }) { transfer -> TransferCard(transfer, onCancel = { onAction(UiAction.CancelTransfer(transfer.id)) }) }
         if (history.isNotEmpty()) item { Text("传输记录 · ${history.size}", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleSmall, color = Fluent.Secondary) }
-        items(history.reversed(), key = { it.id }) { transfer -> TransferCard(transfer) {} }
+        items(history.sortedByDescending { it.createdMillis }, key = { it.id }) { transfer ->
+            TransferCard(transfer, onRepeatDownload = {
+                transfer.sourceFile?.let { onAction(UiAction.Download(listOf(it), transfer.profileId)) }
+            })
+        }
         if (active.isNotEmpty()) item {
             Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
                 Icon(Icons.Outlined.Info, null, Modifier.size(17.dp), tint = Fluent.Muted)
@@ -48,7 +52,7 @@ internal fun TransfersPage(state: UiState, wide: Boolean, onAction: (UiAction) -
 }
 
 @Composable
-private fun TransferCard(transfer: UiTransfer, onCancel: () -> Unit) {
+private fun TransferCard(transfer: UiTransfer, onCancel: () -> Unit = {}, onRepeatDownload: () -> Unit = {}) {
     val active = transfer.status == "running" || transfer.status == "queued"
     val complete = transfer.status == "completed"
     val failed = transfer.status == "failed"
@@ -82,6 +86,14 @@ private fun TransferCard(transfer: UiTransfer, onCancel: () -> Unit) {
             } else {
                 Spacer(Modifier.height(8.dp))
                 Text(formatSize(if (complete) transfer.total else transfer.done), style = MaterialTheme.typography.bodySmall, color = Fluent.Muted)
+            }
+            if (!active && transfer.direction == "download" && transfer.sourceFile != null) {
+                Spacer(Modifier.height(10.dp))
+                TextButton(onClick = onRepeatDownload, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)) {
+                    Icon(Icons.Outlined.Download, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("再次下载")
+                }
             }
         }
     }

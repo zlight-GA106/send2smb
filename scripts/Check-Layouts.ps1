@@ -22,7 +22,7 @@ try {
         & $Adb -s $Serial shell settings put system user_rotation $layout.rotation
         $result = & $Adb -s $Serial shell am instrument -w -e class com.zlight.sendtosmb.ExplorerUiTest com.zlight.sendtosmb.test/androidx.test.runner.AndroidJUnitRunner
         $result | Set-Content (Join-Path $out ($layout.name + '-test.log'))
-        if (($result -join "`n") -notmatch 'OK \(2 tests\)') { throw "Layout UI test failed for $($layout.name)" }
+        if (($result -join "`n") -notmatch 'OK \(3 tests\)') { throw "Layout UI test failed for $($layout.name)" }
         & $Adb -s $Serial shell am start -n com.zlight.sendtosmb/.MainActivity
         Start-Sleep -Seconds 2
         & $Adb -s $Serial shell screencap -p /data/local/tmp/sendtosmb-layout.png

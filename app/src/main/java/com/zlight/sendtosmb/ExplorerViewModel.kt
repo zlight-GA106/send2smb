@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hierynomus.mssmb2.SMBApiException
 import com.zlight.sendtosmb.data.SmbAddress
 import com.zlight.sendtosmb.data.SmbRepository
 import com.zlight.sendtosmb.ui.*
@@ -23,6 +24,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     private val mutable = MutableStateFlow(UiState())
     val state = mutable.asStateFlow()
     private val store = ProfileStore(application)
+    private val transferStore = TransferStore(application)
     private val gate = Mutex()
     private var repository: SmbRepository? = null
     private var foreground = false
@@ -45,6 +47,9 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         runCatching { store.read() }.onSuccess { (profiles, current) ->
             mutable.update { it.copy(profiles = profiles, currentProfileId = current) }
         }.onFailure { mutable.update { it.copy(message = "保存的凭据无法解密，请重新添加连接") } }
+        runCatching { transferStore.read() }.onSuccess { history ->
+            mutable.update { it.copy(transfers = history) }
+        }.onFailure { mutable.update { it.copy(message = "传输记录无法读取，新的记录仍会正常保存") } }
         mutable.update { it.copy(networkAvailable = network.available) }
         network.start()
     }
@@ -68,9 +73,11 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         val old = repository
         repository = null
         if (old != null) CoroutineScope(Dispatchers.IO).launch { runCatching { old.disconnect() } }
+        val hadActiveTransfers = mutable.value.transfers.any { it.status == "running" || it.status == "queued" }
         mutable.update { current -> current.copy(connected = false, connecting = false, loading = false,
             message = message ?: current.message,
             transfers = current.transfers.map { if (it.status in setOf("running", "queued")) it.copy(status = "cancelled", error = "连接关闭，传输已停止") else it }) }
+        if (hadActiveTransfers) persistTransfers()
     }
 
     private fun reconnect() {
@@ -124,12 +131,29 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     }
 
     private suspend fun reload(path: String = mutable.value.path) {
-        val smb = ensureConnection()
-        val (entries, capacity) = withContext(Dispatchers.IO) {
-            smb.list(path) to runCatching { smb.capacity() }.getOrNull()
+        var retried = false
+        while (true) {
+            val smb = ensureConnection()
+            try {
+                val (entries, capacity) = withContext(Dispatchers.IO) {
+                    smb.list(path) to runCatching { smb.capacity() }.getOrNull()
+                }
+                mutable.update { it.copy(path = path, files = entries.map { f -> UiFile(f.name, f.path, f.isDirectory, f.size, f.lastModified) },
+                    capacity = capacity?.let { c -> UiCapacity(c.totalBytes, c.freeBytes) }) }
+                return
+            } catch (error: Exception) {
+                if (retried || !isRecoverableReadFailure(error)) throw error
+                retried = true
+                resetConnectionForRetry()
+            }
         }
-        mutable.update { it.copy(path = path, files = entries.map { f -> UiFile(f.name, f.path, f.isDirectory, f.size, f.lastModified) },
-            capacity = capacity?.let { c -> UiCapacity(c.totalBytes, c.freeBytes) }) }
+    }
+
+    private suspend fun resetConnectionForRetry() {
+        val old = repository
+        repository = null
+        mutable.update { it.copy(connected = false, connecting = false) }
+        if (old != null) withContext(NonCancellable + Dispatchers.IO) { runCatching { old.disconnect() } }
     }
 
     private fun persist() { store.write(mutable.value.profiles, mutable.value.currentProfileId) }
@@ -189,7 +213,10 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             is UiAction.CancelTransfer -> cancelled.add(action.id)
-            UiAction.ClearCompletedTransfers -> mutable.update { it.copy(transfers = it.transfers.filter { t -> t.status in setOf("running", "queued") }) }
+            UiAction.ClearCompletedTransfers -> {
+                mutable.update { it.copy(transfers = it.transfers.filter { t -> t.status in setOf("running", "queued") }) }
+                persistTransfers()
+            }
             UiAction.DismissMessage -> mutable.update { it.copy(message = null) }
             else -> Unit // Document and Wi-Fi pickers belong to the Activity.
         }
@@ -211,7 +238,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                     Triple(uri, name, size)
                 }
             }
-            val items = metadata.map { (uri, name, size) -> Triple(uri, name, newTransfer(name, "upload", size)) }
+            val items = metadata.map { (uri, name, size) -> Triple(uri, name, newTransfer(name, "upload", size, profileId = mutable.value.currentProfileId)) }
             val smb = connectionForTransfers(items.map { it.third })
             for ((uri, name, id) in items) transfer(id) { isCancelled, progress ->
                 withContext(Dispatchers.IO) {
@@ -227,8 +254,21 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun download(files: List<UiFile>, treeUri: Uri) {
-        val items = files.map { it to newTransfer(it.name, "download", if (it.isDirectory) -1 else it.size) }
+    fun download(files: List<UiFile>, treeUri: Uri, requestedProfileId: String? = null) {
+        if (files.isEmpty()) return
+        if (requestedProfileId != null && mutable.value.profiles.none { it.id == requestedProfileId }) {
+            mutable.update { it.copy(message = "原连接已被删除，无法再次下载") }
+            return
+        }
+        if (requestedProfileId != null && requestedProfileId != mutable.value.currentProfileId) {
+            closeSession()
+            autoConnect = true
+            clipboard = emptyList()
+            mutable.update { it.copy(currentProfileId = requestedProfileId, path = "", files = emptyList(), capacity = null, clipboardCount = 0) }
+            runCatching { persist() }.onFailure { mutable.update { state -> state.copy(message = explain(it)) } }
+        }
+        val profileId = requestedProfileId ?: mutable.value.currentProfileId
+        val items = files.map { file -> file to newTransfer(file.name, "download", if (file.isDirectory) -1 else file.size, file, profileId) }
         work {
             val smb = connectionForTransfers(items.map { it.second })
             for ((file, id) in items) transfer(id) { isCancelled, progress ->
@@ -247,10 +287,12 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                             try {
                                 val start = done
                                 getApplication<Application>().contentResolver.openOutputStream(target.uri, "w")?.use { output ->
-                                    smb.download(entry.path, output, isCancelled) { bytes, _ -> progress(start + bytes, if (file.isDirectory) -1 else file.size) }
+                                    smb.download(entry.path, output, isCancelled,
+                                        { bytes, _ -> progress(start + bytes, if (file.isDirectory) -1 else file.size) },
+                                        expectedBytes = entry.size)
                                 } ?: error("无法写入保存位置")
                                 done += entry.size
-                            } catch (e: Exception) { target.delete(); throw e }
+                            } catch (e: Exception) { runCatching { target.delete() }; throw e }
                         }
                     }
                     save(file, root, 0)
@@ -266,16 +308,19 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         mutable.update { it.copy(message = "$direction 完成 $completed/${items.size} 个项目${if (completed < items.size) "，请在传输页查看详情" else ""}") }
     }
 
-    private fun newTransfer(name: String, direction: String, total: Long): String {
+    private fun newTransfer(name: String, direction: String, total: Long, sourceFile: UiFile? = null, profileId: String? = null): String {
         val id = UUID.randomUUID().toString()
-        mutable.update { it.copy(transfers = it.transfers + UiTransfer(id, name, direction, total = total)) }
+        mutable.update { it.copy(transfers = it.transfers + UiTransfer(id, name, direction, total = total, sourceFile = sourceFile, profileId = profileId)) }
         return id
     }
 
     private suspend fun connectionForTransfers(ids: List<String>): SmbRepository = try {
         ensureConnection()
     } catch (e: Exception) {
-        if (e !is CancellationException) ids.forEach { id -> updateTransfer(id) { it.copy(status = "failed", error = explain(e)) } }
+        if (e !is CancellationException) {
+            ids.forEach { id -> updateTransfer(id) { it.copy(status = "failed", error = explain(e)) } }
+            persistTransfers()
+        }
         throw e
     }
 
@@ -294,17 +339,34 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
             }
             if (isCancelled()) throw CancellationException()
             updateTransfer(id) { it.copy(status = "completed", done = if (it.total >= 0) it.total else it.done) }
+            persistTransfers()
         } catch (e: Exception) {
             updateTransfer(id) { it.copy(status = if (isCancelled() || e is CancellationException) "cancelled" else "failed", error = if (isCancelled()) "传输已停止" else explain(e)) }
+            persistTransfers()
             context.ensureActive()
         } finally { cancelled.remove(id) }
     }
 
     private fun updateTransfer(id: String, update: (UiTransfer) -> UiTransfer) = mutable.update { it.copy(transfers = it.transfers.map { t -> if (t.id == id) update(t) else t }) }
 
+    private fun persistTransfers() {
+        runCatching { transferStore.write(mutable.value.transfers) }
+            .onFailure { mutable.update { state -> state.copy(message = "传输记录保存失败") } }
+    }
+
+    private fun isRecoverableReadFailure(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any { cause ->
+            val message = cause.message.orEmpty()
+            (cause is SMBApiException && cause.statusCode == 0xC0000022L) ||
+                listOf("ACCESS_DENIED", "USER_SESSION_DELETED", "NETWORK_SESSION_EXPIRED", "NETWORK_NAME_DELETED",
+                    "CONNECTION_DISCONNECTED", "CONNECTION_RESET", "CONNECTION RESET", "BROKEN_PIPE", "BROKEN PIPE")
+                    .any { message.contains(it, ignoreCase = true) }
+        }
+
     private fun explain(error: Throwable): String {
         val message = error.message.orEmpty()
         return when {
+            error is SecurityException -> "所选保存位置没有写入权限，请选择其他文件夹"
             message.contains("LOGON_FAILURE", true) || message.contains("ACCESS_DENIED", true) -> "访问被拒绝，请检查用户名、密码和共享权限"
             message.contains("BAD_NETWORK_NAME", true) -> "找不到共享文件夹，请检查 URL 中的共享名称"
             message.contains("COLLISION", true) -> "目标已存在同名项目，请修改名称后重试"

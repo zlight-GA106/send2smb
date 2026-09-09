@@ -93,9 +93,9 @@ internal fun ConnectionsPage(state: UiState, wide: Boolean, onAction: (UiAction)
                 Spacer(Modifier.height(12.dp))
                 ConnectionTip(Icons.Outlined.Wifi, "在同一局域网", "手机与共享设备连接同一 Wi-Fi 或有线网络。")
                 Spacer(Modifier.height(14.dp))
-                ConnectionTip(Icons.Outlined.Lock, "凭据安全保存在本机", "密码加密存储；关闭“记住凭据”后不会写入磁盘。")
+                ConnectionTip(Icons.Outlined.AddLink, "发起连接并保存凭据", "填写共享地址与账号；凭据仅加密保存在本机。")
                 Spacer(Modifier.height(14.dp))
-                ConnectionTip(Icons.Outlined.Autorenew, "跟随你的使用节奏", "离开应用时断开连接，返回时重新连接上次的位置。")
+                ConnectionTip(Icons.Outlined.FolderOpen, "访问你的文件", "连接后从文件管理页上传、下载和整理共享文件。")
             }
         }
     }
