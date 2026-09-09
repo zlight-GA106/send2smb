@@ -59,8 +59,9 @@ class ExplorerUiTest {
         compose.setContent { SendToSmbApp(UiState(profiles = listOf(profile), currentProfileId = profile.id,
             connected = true, transfers = listOf(history)), actions::add) }
 
-        compose.onNodeWithText("打开文件管理").assertIsDisplayed()
-        compose.onNodeWithText("打开文件管理").performClick()
+        compose.onNodeWithText("文件").assertIsDisplayed()
+        compose.onNodeWithText("//127.0.0.1:1445/TESTSHARE").assertIsDisplayed()
+        compose.onNodeWithText("文件管理").performClick()
         compose.onNodeWithText("搜索文件或文件夹").assertIsDisplayed()
         compose.onNodeWithText("传输").performClick()
         compose.onNodeWithText("传输记录默认保存在本机").assertIsDisplayed()

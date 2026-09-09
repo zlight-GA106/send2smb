@@ -43,7 +43,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 
 调试 APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。正式发布需由所有者配置自己的发布签名；密码、密钥、SDK 本地路径和测试环境不进入 Git。
 
-本次已验证安装包另外保存为 `releases/SendToSMB-1.1.0-debug.apk`，SHA-256 记录在 `releases/SHA256SUMS.txt`。APK 本体不纳入 Git，并作为 GitHub Release 附件发布。
+本次已验证安装包另外保存为 `releases/SendToSMB-1.1.1-debug.apk`，SHA-256 记录在 `releases/SHA256SUMS.txt`。APK 本体不纳入 Git，并作为 GitHub Release 附件发布。
 
 ## 实现与边界
 

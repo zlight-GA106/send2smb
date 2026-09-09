@@ -1,2 +1,3 @@
 6a07cb05f8be11e6547a5ebba638559aab478f4143c58e37e43dc594afada71c  SendToSMB-1.0.0-debug.apk
 15e2ac5f4f520541bfbdaae7d6860679fe0fc992a8fc52f6f4a47d911e7476cf  SendToSMB-1.1.0-debug.apk
+9e8e655239acef32dca68a998ba839a8e8bdbb3ff290156b29cdbc10585bc5a6  SendToSMB-1.1.1-debug.apk

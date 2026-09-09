@@ -69,25 +69,21 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 28.dp else 20.dp)) {
-        if (!keyboardVisible) {
+        if (!state.connected && !keyboardVisible) {
             Spacer(Modifier.height(16.dp))
-            PageHeading("文件管理", if (state.connected) currentProfile?.name ?: "共享文件夹" else "连接后管理共享文件") {
-                if (state.connected) ToolIcon(Icons.Outlined.Refresh, "刷新文件夹", enabled = !state.loading) { onAction(UiAction.Refresh) }
-            }
+            PageHeading("文件管理", "连接后管理共享文件")
             Spacer(Modifier.height(18.dp))
         }
         if (!state.connected) {
             FileManagerDisconnected(state, onAction, onConnect)
         } else {
-            if (!keyboardVisible && wide) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { Breadcrumbs(state.path, currentProfile?.name ?: "共享根目录", onAction) }
-                    CapacityCard(state.capacity, currentProfile?.name ?: "网络存储", true, Modifier.width(330.dp))
-                }
-            } else if (!keyboardVisible) {
-                CapacityCard(state.capacity, currentProfile?.name ?: "网络存储", true, Modifier.fillMaxWidth())
+            if (!keyboardVisible) {
                 Spacer(Modifier.height(12.dp))
-                Breadcrumbs(state.path, "共享根目录", onAction)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { Breadcrumbs(state.path, currentProfile?.name ?: "共享根目录", onAction) }
+                    Spacer(Modifier.width(6.dp))
+                    ToolIcon(Icons.Outlined.Refresh, "刷新文件夹", enabled = !state.loading) { onAction(UiAction.Refresh) }
+                }
             }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -194,7 +190,7 @@ private fun FileManagerDisconnected(state: UiState, onAction: (UiAction) -> Unit
 }
 
 @Composable
-private fun Breadcrumbs(path: String, rootName: String, onAction: (UiAction) -> Unit) {
+internal fun Breadcrumbs(path: String, rootName: String, onAction: (UiAction) -> Unit) {
     val segments = path.trim('/').split('/').filter { it.isNotBlank() }
     Surface(shape = Fluent.Control, color = Color.White, border = BorderStroke(1.dp, Fluent.Border)) {
         Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
