@@ -65,7 +65,7 @@ class SmbRepository : Closeable {
     }
 
     private val active = AtomicReference<State?>(null)
-    val isConnected: Boolean get() = active.get()?.let { it.share != null && !it.sockets.aborted.get() } == true
+    val isConnected: Boolean get() = active.get()?.let { it.share?.isConnected == true && !it.sockets.aborted.get() } == true
 
     fun connect(address: SmbAddress, username: String, password: String, domain: String = "") {
         val state = State(address)

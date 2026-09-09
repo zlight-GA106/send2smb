@@ -3,10 +3,12 @@ package com.zlight.sendtosmb
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hierynomus.mssmb2.SMBApiException
+import com.hierynomus.smbj.common.SMBRuntimeException
 import com.zlight.sendtosmb.data.SmbAddress
 import com.zlight.sendtosmb.data.SmbRepository
 import com.zlight.sendtosmb.ui.*
@@ -50,6 +52,9 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         runCatching { transferStore.read() }.onSuccess { history ->
             mutable.update { it.copy(transfers = history) }
         }.onFailure { mutable.update { it.copy(message = "传输记录无法读取，新的记录仍会正常保存") } }
+        runCatching { transferStore.readDownloadDirectory() }.onSuccess { directory ->
+            mutable.update { it.copy(downloadDirectoryUri = directory?.uri, downloadDirectoryName = directory?.name) }
+        }.onFailure { mutable.update { it.copy(message = "保存的下载目录已失效，请重新选择") } }
         mutable.update { it.copy(networkAvailable = network.available) }
         network.start()
     }
@@ -88,7 +93,12 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     private suspend fun ensureConnection(): SmbRepository {
         check(foreground) { "应用已退出前台" }
         check(network.available) { "请先连接 Wi-Fi 或有线局域网" }
-        repository?.takeIf { mutable.value.connected }?.let { return it }
+        repository?.let { current ->
+            if (mutable.value.connected && current.isConnected) return current
+            repository = null
+            mutable.update { it.copy(connected = false, connecting = false) }
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { current.disconnect() } }
+        }
         val profile = mutable.value.profiles.firstOrNull { it.id == mutable.value.currentProfileId }
             ?: error("请先添加并选择 SMB 连接")
         val address = SmbAddress.parse(profile.url)
@@ -122,6 +132,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
             } catch (_: CancellationException) {
                 // A background transition invalidates this operation and its connection.
             } catch (e: Exception) {
+                Log.e(TAG, "SMB operation failed", e)
                 if (expected == generation) mutable.update { it.copy(connecting = false, message = explain(e)) }
             }
         }
@@ -142,7 +153,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                     capacity = capacity?.let { c -> UiCapacity(c.totalBytes, c.freeBytes) }) }
                 return
             } catch (error: Exception) {
-                if (retried || !isRecoverableReadFailure(error)) throw error
+                if (retried || !shouldRetryRead(error)) throw error
                 retried = true
                 resetConnectionForRetry()
             }
@@ -216,6 +227,11 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
             UiAction.ClearCompletedTransfers -> {
                 mutable.update { it.copy(transfers = it.transfers.filter { t -> t.status in setOf("running", "queued") }) }
                 persistTransfers()
+            }
+            UiAction.ClearDownloadDirectory -> {
+                runCatching { transferStore.writeDownloadDirectory(null) }
+                    .onSuccess { mutable.update { it.copy(downloadDirectoryUri = null, downloadDirectoryName = null, message = "已恢复为每次下载时选择目录") } }
+                    .onFailure { mutable.update { state -> state.copy(message = explain(it)) } }
             }
             UiAction.DismissMessage -> mutable.update { it.copy(message = null) }
             else -> Unit // Document and Wi-Fi pickers belong to the Activity.
@@ -302,6 +318,20 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun setDownloadDirectory(uri: Uri, name: String) {
+        runCatching {
+            val directory = SavedDownloadDirectory(uri.toString(), name.ifBlank { "已选目录" })
+            transferStore.writeDownloadDirectory(directory)
+            mutable.update { it.copy(downloadDirectoryUri = directory.uri, downloadDirectoryName = directory.name,
+                message = "已指定下载目录：${directory.name}") }
+        }.onFailure { error -> mutable.update { it.copy(message = explain(error)) } }
+    }
+
+    fun reportDownloadDirectoryError(error: Throwable) {
+        Log.e(TAG, "Download directory selection failed", error)
+        mutable.update { it.copy(message = explain(error)) }
+    }
+
     private fun reportTransfers(ids: List<String>, direction: String) {
         val items = mutable.value.transfers.filter { it.id in ids }
         val completed = items.count { it.status == "completed" }
@@ -354,10 +384,10 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
             .onFailure { mutable.update { state -> state.copy(message = "传输记录保存失败") } }
     }
 
-    private fun isRecoverableReadFailure(error: Throwable): Boolean =
+    private fun shouldRetryRead(error: Throwable): Boolean =
         generateSequence(error) { it.cause }.any { cause ->
             val message = cause.message.orEmpty()
-            (cause is SMBApiException && cause.statusCode == 0xC0000022L) ||
+            cause is SMBApiException || cause is SMBRuntimeException || cause is IOException ||
                 listOf("ACCESS_DENIED", "USER_SESSION_DELETED", "NETWORK_SESSION_EXPIRED", "NETWORK_NAME_DELETED",
                     "CONNECTION_DISCONNECTED", "CONNECTION_RESET", "CONNECTION RESET", "BROKEN_PIPE", "BROKEN PIPE")
                     .any { message.contains(it, ignoreCase = true) }
@@ -365,11 +395,14 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
 
     private fun explain(error: Throwable): String {
         val message = error.message.orEmpty()
+        val smb = generateSequence(error) { it.cause }.filterIsInstance<SMBApiException>().firstOrNull()
         return when {
             error is SecurityException -> "所选保存位置没有写入权限，请选择其他文件夹"
-            message.contains("LOGON_FAILURE", true) || message.contains("ACCESS_DENIED", true) -> "访问被拒绝，请检查用户名、密码和共享权限"
+            smb?.statusCode == 0xC0000022L || message.contains("LOGON_FAILURE", true) || message.contains("ACCESS_DENIED", true) -> "访问被拒绝，请检查用户名、密码和共享权限"
+            smb?.statusCode in setOf(0xC000000FL, 0xC0000034L, 0xC000003AL) -> "此文件或文件夹已不存在，请刷新后重试"
             message.contains("BAD_NETWORK_NAME", true) -> "找不到共享文件夹，请检查 URL 中的共享名称"
             message.contains("COLLISION", true) -> "目标已存在同名项目，请修改名称后重试"
+            smb != null -> "服务器暂时无法打开此项目，已重新连接；请再试一次"
             message.contains("connect", true) || message.contains("timeout", true) || error is java.net.SocketException -> "无法连接服务器，请检查 Wi-Fi、服务器地址和 SMB 端口"
             message.isNotBlank() && message.any { it in '\u4e00'..'\u9fff' } -> message.take(200)
             else -> "操作失败，请检查连接和文件权限后重试"
@@ -377,6 +410,8 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     }
 
     override fun onCleared() { network.stop(); closeSession(); super.onCleared() }
+
+    private companion object { const val TAG = "SendToSMB" }
 }
 
 internal fun join(parent: String, name: String) = if (parent.isBlank()) name else "$parent/$name"

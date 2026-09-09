@@ -14,6 +14,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+data class SavedDownloadDirectory(val uri: String, val name: String)
+
 /** Keeps terminal transfer records in private, backup-excluded, encrypted preferences. */
 class TransferStore(context: Context) {
     private val prefs = context.getSharedPreferences("transfer_history", Context.MODE_PRIVATE)
@@ -30,10 +32,8 @@ class TransferStore(context: Context) {
     }
 
     fun read(): List<UiTransfer> {
-        val payload = prefs.getString("payload", null) ?: return emptyList()
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(prefs.getString("iv", ""), Base64.NO_WRAP)))
-        val array = JSONArray(String(cipher.doFinal(Base64.decode(payload, Base64.NO_WRAP)), Charsets.UTF_8))
+        val content = decrypt("payload", "iv") ?: return emptyList()
+        val array = JSONArray(content)
         return (0 until array.length()).map { index ->
             val item = array.getJSONObject(index)
             val source = item.optJSONObject("source")?.let {
@@ -79,11 +79,37 @@ class TransferStore(context: Context) {
                 }
                 array.put(item)
             }
+        encrypt("payload", "iv", array.toString(), "传输记录保存失败")
+    }
+
+    fun readDownloadDirectory(): SavedDownloadDirectory? {
+        val content = decrypt("download_directory", "download_directory_iv") ?: return null
+        val item = JSONObject(content)
+        return SavedDownloadDirectory(item.getString("uri"), item.optString("name").ifBlank { "已选目录" })
+    }
+
+    fun writeDownloadDirectory(directory: SavedDownloadDirectory?) {
+        if (directory == null) {
+            check(prefs.edit().remove("download_directory").remove("download_directory_iv").commit()) { "下载目录保存失败" }
+            return
+        }
+        encrypt("download_directory", "download_directory_iv",
+            JSONObject().put("uri", directory.uri).put("name", directory.name).toString(), "下载目录保存失败")
+    }
+
+    private fun decrypt(payloadKey: String, ivKey: String): String? {
+        val payload = prefs.getString(payloadKey, null) ?: return null
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(prefs.getString(ivKey, ""), Base64.NO_WRAP)))
+        return String(cipher.doFinal(Base64.decode(payload, Base64.NO_WRAP)), Charsets.UTF_8)
+    }
+
+    private fun encrypt(payloadKey: String, ivKey: String, content: String, failure: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
         check(prefs.edit()
-            .putString("payload", Base64.encodeToString(cipher.doFinal(array.toString().toByteArray(Charsets.UTF_8)), Base64.NO_WRAP))
-            .putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .commit()) { "传输记录保存失败" }
+            .putString(payloadKey, Base64.encodeToString(cipher.doFinal(content.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP))
+            .putString(ivKey, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+            .commit()) { failure }
     }
 
     private companion object { const val MAX_HISTORY = 200 }

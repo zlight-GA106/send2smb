@@ -61,16 +61,25 @@ class LifecycleAndCredentialsTest {
     @Test fun completedDownloadHistoryIsEncryptedAndRestored() {
         val transferStore = TransferStore(app)
         val previous = transferStore.read()
+        val previousDirectory = transferStore.readDownloadDirectory()
         val source = UiFile("private-report.pdf", "Documents/private-report.pdf", false, 4096)
         val transfer = UiTransfer("history-encryption-test", source.name, "download", 4096, 4096,
             "completed", sourceFile = source, profileId = "profile-for-repeat")
+        val directory = SavedDownloadDirectory("content://test-provider/tree/private-downloads", "Private downloads")
         try {
             transferStore.write(listOf(transfer))
+            transferStore.writeDownloadDirectory(directory)
             assertEquals(transfer, transferStore.read().single())
+            assertEquals(directory, transferStore.readDownloadDirectory())
             val persisted = app.getSharedPreferences("transfer_history", 0).all.values.joinToString()
             assertFalse(persisted.contains(source.name))
             assertFalse(persisted.contains(source.path))
-        } finally { transferStore.write(previous) }
+            assertFalse(persisted.contains(directory.uri))
+            assertFalse(persisted.contains(directory.name))
+        } finally {
+            transferStore.write(previous)
+            transferStore.writeDownloadDirectory(previousDirectory)
+        }
     }
 
     private fun await(condition: () -> Boolean) {

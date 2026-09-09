@@ -74,14 +74,14 @@ Impacket 是协议测试服务器，`FILE_FS_FULL_SIZE_INFORMATION` 返回固定
 
 - `assembleDebug`、`assembleDebugAndroidTest`、`testDebugUnitTest` 和 `lintDebug` 成功；Lint 无错误，保留依赖版本和代码风格建议。
 - 8 个 JVM 地址解析单元测试通过。
-- Redmi Android 16 上完整仪器测试通过：文件树往返、SHA-256、零字节、取消不发布部分文件、错误密码与重连、无响应连接的强制断开、容量、真实共享只读、凭据与传输历史加密、ViewModel 生命周期、独立首页/文件管理、搜索/网格/删除确认和再次下载。Runner 显示 `OK (13 tests)`，其中 1 个是未传参而跳过的手工配置辅助测试。
-- 真实 `smb://192.168.95.55/windisk` 在手机上使用访客认证读取成功：82 个根目录项目，总容量 126,495,985,664 字节，可用 50,355,122,176 字节（当时的读取结果）。整个真实共享测试函数只有连接、list、capacity 和 disconnect，无写入/删除调用。
+- Redmi Android 16 上完整仪器测试通过：文件树往返、SHA-256、零字节、取消不发布部分文件、错误密码与重连、无响应连接的强制断开、容量、真实共享只读、凭据/传输历史/默认下载目录加密、ViewModel 生命周期、独立首页/文件管理、搜索/网格/删除确认和再次下载。Runner 显示 `OK (14 tests)`，其中 1 个是未传参而跳过的手工配置辅助测试。
+- 真实 `smb://192.168.95.55/windisk` 在手机上使用访客认证读取成功：82 个根目录项目，总容量 126,495,985,664 字节，可用 50,355,122,176 字节（当时的读取结果）。另对用户截图中的 `202609计算机三级linux应用与开发` 连续执行 5 次目录读取，验证点击目录时不会复用已关闭的共享。整个真实共享测试函数只有连接、list、capacity 和 disconnect，无写入/删除调用。
 - 系统文件选择器实测上传 `SendToSMB-upload-check.txt` 到隔离共享成功，SHA-256：`76AC51CD9DF0521D6DDFBFB0B20063AE4D972455820082529964A4937C16CF06`，与手机上传前的测试源一致。
 - 通过文件菜单下载同一文件，系统目录选择器授权 `Documents/SendToSMB-check` 后保存成功；下载后的 SHA-256 与上述源文件完全一致。
 - 使用同一测试机临时模拟 1080×2520、420dpi 的 21:9 手机，以及 1920×1080、240dpi 的 16:9 平板横屏；两种布局各 3 个 UI 测试通过，并实际查看截图。验证首页、独立文件管理、搜索、传输历史和四栏导航在两种比例下均可操作。
 - 检查结束后恢复原始 1440×3200、560dpi、旋转 0、自动旋转关闭的设置。实际平板硬件尚未测试；布局通过手机显示尺寸模拟验证。
 - 已移除手机里的隔离测试连接配置，保留用户的 Windisk 连接。回到桌面后重新打开应用，真实共享自动重连成功，界面显示 82 个项目及真实容量。
-- 目录读取对会话失效及临时 `ACCESS_DENIED` 自动重连一次；下载文件在服务端拒绝读取属性时回退到仅请求 `FILE_READ_DATA`。真实共享回归仍只调用连接、目录、容量和断开，不包含任何写入或删除。
+- 已复现导致偶发失败的 `DiskShare has already been closed`，连接状态现在同时检查 SMBJ 共享和底层 Socket；目录读取会丢弃关闭的共享并自动重连一次。下载文件在服务端拒绝读取属性时回退到仅请求 `FILE_READ_DATA`。真实共享回归仍只调用连接、目录、容量和断开，不包含任何写入或删除。
 
 SMBJ 0.14.0 的匿名 SMB3 登录遇到上游 #872 空 session key 问题，应用对空凭据使用 `AuthenticationContext.guest()`，真实共享只读回归已通过。Android 16 UI 自动化需要 Espresso 3.7.0，已显式锁定以避免旧版反射 `InputManager.getInstance()` 的失败。
 
@@ -90,7 +90,7 @@ SMBJ 0.14.0 的匿名 SMB3 登录遇到上游 #872 空 session key 问题，应�
 ```powershell
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb shell am instrument -w -r -e realSmbUrl smb://192.168.95.55/windisk com.zlight.sendtosmb.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -r -e realSmbUrl smb://192.168.95.55/windisk -e realSmbPath 202609计算机三级linux应用与开发 com.zlight.sendtosmb.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 省略 `realSmbUrl` 即跳过真实共享检查。`DeviceSetupTest` 仅在显式传入 `setupUrl` 时写入本地加密连接配置，供手工 UI 验证，不会访问共享。

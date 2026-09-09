@@ -157,6 +157,21 @@ class SmbIntegrationTest {
         }
     }
 
+    /** Optional diagnostic for a user-selected real folder. This performs list and disconnect only. */
+    @Test fun optionalRealFolderReadOnlyListing() {
+        val arguments = InstrumentationRegistry.getArguments()
+        val url = arguments.getString("realSmbUrl").orEmpty()
+        val path = arguments.getString("realSmbPath").orEmpty()
+        assumeTrue("No realSmbUrl/realSmbPath supplied; folder verification skipped", url.isNotBlank() && path.isNotBlank())
+        SmbRepository().use { repository ->
+            repository.connect(SmbAddress.parse(url), arguments.getString("realSmbUsername").orEmpty(),
+                arguments.getString("realSmbPassword").orEmpty(), arguments.getString("realSmbDomain").orEmpty())
+            repository.list()
+            val entries = (1..5).flatMap { repository.list(path) }
+            Log.i(TAG, "Real folder read-only list succeeded: path=$path, ${entries.size} entries")
+        }
+    }
+
     private fun withIsolatedFolder(action: (SmbRepository, String) -> Unit) {
         val repository = SmbRepository()
         val root = "test-run-${UUID.randomUUID()}"

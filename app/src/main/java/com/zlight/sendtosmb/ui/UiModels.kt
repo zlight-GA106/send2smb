@@ -46,6 +46,8 @@ data class UiState(
     val message: String? = null,
     val transfers: List<UiTransfer> = emptyList(),
     val clipboardCount: Int = 0,
+    val downloadDirectoryUri: String? = null,
+    val downloadDirectoryName: String? = null,
 )
 
 sealed interface UiAction {
@@ -64,6 +66,8 @@ sealed interface UiAction {
     data object Paste : UiAction
     data class CancelTransfer(val id: String) : UiAction
     data object ClearCompletedTransfers : UiAction
+    data object SelectDownloadDirectory : UiAction
+    data object ClearDownloadDirectory : UiAction
     data object OpenWifiSettings : UiAction
     data object DismissMessage : UiAction
 }

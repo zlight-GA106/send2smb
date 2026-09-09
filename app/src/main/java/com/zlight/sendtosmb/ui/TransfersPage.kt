@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -22,6 +23,7 @@ internal fun TransfersPage(state: UiState, wide: Boolean, onAction: (UiAction) -
                 if (history.isNotEmpty()) ToolIcon(Icons.Outlined.DeleteSweep, "清空传输记录") { onAction(UiAction.ClearCompletedTransfers) }
             }
         }
+        item { DownloadDirectoryCard(state, onAction) }
         if (state.transfers.isEmpty()) item {
             FluentCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -46,6 +48,34 @@ internal fun TransfersPage(state: UiState, wide: Boolean, onAction: (UiAction) -
                 Icon(Icons.Outlined.Info, null, Modifier.size(17.dp), tint = Fluent.Muted)
                 Spacer(Modifier.width(8.dp))
                 Text("传输期间请保持应用在前台。离开应用会断开 SMB 连接，未完成的任务将停止。", style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadDirectoryCard(state: UiState, onAction: (UiAction) -> Unit) {
+    FluentCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AccentIcon(Icons.Outlined.FolderOpen, 42)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("指定保存目录", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(3.dp))
+                    Text(state.downloadDirectoryName ?: "未指定时，每次下载都会询问保存位置", style = MaterialTheme.typography.bodySmall,
+                        color = Fluent.Secondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SecondaryButton(if (state.downloadDirectoryUri == null) "选择目录" else "更改目录", Icons.AutoMirrored.Outlined.DriveFileMove) {
+                    onAction(UiAction.SelectDownloadDirectory)
+                }
+                if (state.downloadDirectoryUri != null) {
+                    Spacer(Modifier.width(6.dp))
+                    TextButton(onClick = { onAction(UiAction.ClearDownloadDirectory) }) { Text("每次询问") }
+                }
             }
         }
     }

@@ -65,6 +65,9 @@ class ExplorerUiTest {
         compose.onNodeWithText("搜索文件或文件夹").assertIsDisplayed()
         compose.onNodeWithText("传输").performClick()
         compose.onNodeWithText("传输记录默认保存在本机").assertIsDisplayed()
+        compose.onNodeWithText("指定保存目录").assertIsDisplayed()
+        compose.onNodeWithText("选择目录").performClick()
+        compose.runOnIdle { assertTrue(actions.contains(UiAction.SelectDownloadDirectory)) }
         compose.onNodeWithText("再次下载").performClick()
         compose.runOnIdle {
             val repeated = actions.filterIsInstance<UiAction.Download>().single()
