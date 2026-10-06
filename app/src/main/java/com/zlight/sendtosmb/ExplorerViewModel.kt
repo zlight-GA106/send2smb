@@ -21,12 +21,17 @@ import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 class ExplorerViewModel(application: Application) : AndroidViewModel(application) {
     private val mutable = MutableStateFlow(UiState())
     val state = mutable.asStateFlow()
     private val store = ProfileStore(application)
     private val transferStore = TransferStore(application)
+    private val settings = SettingsStore(application)
+    private val updates = EasyUpdateClient(application)
+    private var deviceId = ""
+    private val updateCancel = AtomicBoolean(false)
     private val gate = Mutex()
     private var repository: SmbRepository? = null
     private var foreground = false
@@ -40,7 +45,8 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val wasAvailable = mutable.value.networkAvailable
             mutable.update { it.copy(networkAvailable = available) }
-            if (!available && wasAvailable) closeSession("局域网已断开，请连接 Wi-Fi 后重试")
+            // LAN detection is only a hint: VPN or other routes may still reach the server,
+            // so never close a working session just because Wi-Fi/Ethernet was lost.
             if (available && !wasAvailable && foreground && autoConnect) reconnect()
         }
     }
@@ -55,6 +61,10 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         runCatching { transferStore.readDownloadDirectory() }.onSuccess { directory ->
             mutable.update { it.copy(downloadDirectoryUri = directory?.uri, downloadDirectoryName = directory?.name) }
         }.onFailure { mutable.update { it.copy(message = "保存的下载目录已失效，请重新选择") } }
+        runCatching { settings.read() }.onSuccess { saved ->
+            deviceId = saved.deviceId
+            mutable.update { it.copy(einkMode = saved.einkMode, update = it.update.copy(serverUrl = saved.updateServerUrl)) }
+        }
         mutable.update { it.copy(networkAvailable = network.available) }
         network.start()
     }
@@ -86,13 +96,12 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun reconnect() {
-        if (!foreground || !autoConnect || !mutable.value.networkAvailable || mutable.value.currentProfileId == null || mutable.value.connected || mutable.value.connecting) return
+        if (!foreground || !autoConnect || mutable.value.currentProfileId == null || mutable.value.connected || mutable.value.connecting) return
         work { ensureConnection(); reload() }
     }
 
     private suspend fun ensureConnection(): SmbRepository {
         check(foreground) { "应用已退出前台" }
-        check(network.available) { "请先连接 Wi-Fi 或有线局域网" }
         repository?.let { current ->
             if (mutable.value.connected && current.isConnected) return current
             repository = null
@@ -186,10 +195,10 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                 closeSession()
                 autoConnect = true
                 clipboard = emptyList()
-                mutable.update { it.copy(currentProfileId = action.profileId, path = "", files = emptyList(), capacity = null, clipboardCount = 0, message = null) }
+                mutable.update { it.copy(currentProfileId = action.profileId, path = "", files = emptyList(), capacity = null, clipboardCount = 0,
+                    message = if (network.available) null else "未检测到局域网，直接尝试连接服务器") }
                 runCatching { persist() }.onFailure { mutable.update { s -> s.copy(message = explain(it)) } }
-                if (!network.available) mutable.update { it.copy(message = "请连接与 SMB 服务器互通的 Wi-Fi 或有线局域网") }
-                else reconnect()
+                reconnect()
             }
             UiAction.Disconnect -> { autoConnect = false; closeSession("已断开连接；下次进入应用时自动重连") }
             is UiAction.DeleteProfile -> {
@@ -233,8 +242,71 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                     .onSuccess { mutable.update { it.copy(downloadDirectoryUri = null, downloadDirectoryName = null, message = "已恢复为每次下载时选择目录") } }
                     .onFailure { mutable.update { state -> state.copy(message = explain(it)) } }
             }
+            is UiAction.SetEinkMode -> {
+                runCatching { settings.writeEink(action.enabled) }
+                    .onSuccess { mutable.update { it.copy(einkMode = action.enabled) } }
+                    .onFailure { mutable.update { state -> state.copy(message = explain(it)) } }
+            }
+            is UiAction.CheckUpdate -> checkForUpdate(action.serverUrl)
+            UiAction.DownloadUpdate -> downloadUpdate()
+            UiAction.CancelUpdateDownload -> updateCancel.set(true)
+            is UiAction.ReportUpdateStatus -> setUpdateStatus(action.message)
             UiAction.DismissMessage -> mutable.update { it.copy(message = null) }
-            else -> Unit // Document and Wi-Fi pickers belong to the Activity.
+            else -> Unit // Document, Wi-Fi pickers and the APK installer belong to the Activity.
+        }
+    }
+
+    private fun setUpdateStatus(status: String) = mutable.update { it.copy(update = it.update.copy(status = status)) }
+
+    private fun checkForUpdate(rawUrl: String) {
+        if (mutable.value.update.checking || mutable.value.update.downloading) return
+        val base = runCatching { EasyUpdateClient.normalizeServer(rawUrl) }.getOrElse {
+            setUpdateStatus("服务地址无效：请输入 http:// 或 https:// 开头的地址")
+            return
+        }
+        runCatching { settings.writeUpdateServerUrl(base) }
+        mutable.update { it.copy(update = it.update.copy(serverUrl = base, checking = true, info = null,
+            status = "正在检查更新…", progress = 0f, verifiedPath = null)) }
+        viewModelScope.launch {
+            runCatching { updates.check(base) }
+                .onSuccess { outcome ->
+                    when (outcome) {
+                        is UpdateOutcome.UpToDate -> mutable.update { it.copy(update = it.update.copy(checking = false,
+                            status = "已是最新版本（${outcome.latestName} · ${outcome.latestCode}）")) }
+                        is UpdateOutcome.Available -> mutable.update { it.copy(update = it.update.copy(checking = false,
+                            info = outcome.info, status = null)) }
+                    }
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutable.update { it.copy(update = it.update.copy(checking = false,
+                        status = "检查更新失败：${error.message ?: "请检查服务地址和网络"}")) }
+                }
+            viewModelScope.launch(Dispatchers.IO) { runCatching { updates.heartbeat(base, deviceId) } }
+        }
+    }
+
+    private fun downloadUpdate() {
+        val info = mutable.value.update.info ?: return
+        if (mutable.value.update.downloading) return
+        val base = mutable.value.update.serverUrl
+        updateCancel.set(false)
+        mutable.update { it.copy(update = it.update.copy(downloading = true, progress = 0f, verifiedPath = null,
+            status = "正在下载 ${info.versionName}…")) }
+        viewModelScope.launch {
+            try {
+                val file = updates.download(info, base, { updateCancel.get() }) { done, total ->
+                    mutable.update { state -> state.copy(update = state.update.copy(progress = if (total > 0) done.toFloat() / total else 0f)) }
+                }
+                mutable.update { it.copy(update = it.update.copy(downloading = false, progress = 1f,
+                    verifiedPath = file.absolutePath, status = "更新包已下载并通过校验，可以安装")) }
+            } catch (_: CancellationException) {
+                mutable.update { it.copy(update = it.update.copy(downloading = false, progress = 0f, status = "已取消下载")) }
+            } catch (error: Exception) {
+                Log.e(TAG, "Update download failed", error)
+                mutable.update { it.copy(update = it.update.copy(downloading = false, progress = 0f,
+                    status = "下载失败：${error.message ?: "请重试"}")) }
+            }
         }
     }
 
@@ -403,7 +475,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
             message.contains("BAD_NETWORK_NAME", true) -> "找不到共享文件夹，请检查 URL 中的共享名称"
             message.contains("COLLISION", true) -> "目标已存在同名项目，请修改名称后重试"
             smb != null -> "服务器暂时无法打开此项目，已重新连接；请再试一次"
-            message.contains("connect", true) || message.contains("timeout", true) || error is java.net.SocketException -> "无法连接服务器，请检查 Wi-Fi、服务器地址和 SMB 端口"
+            message.contains("connect", true) || message.contains("timeout", true) || error is java.net.SocketException -> "无法连接服务器，请检查网络、服务器地址和 SMB 端口"
             message.isNotBlank() && message.any { it in '\u4e00'..'\u9fff' } -> message.take(200)
             else -> "操作失败，请检查连接和文件权限后重试"
         }

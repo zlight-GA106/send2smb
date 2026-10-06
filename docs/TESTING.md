@@ -64,7 +64,9 @@ Impacket 是协议测试服务器，`FILE_FS_FULL_SIZE_INFORMATION` 返回固定
 - [x] 通过 Android 文件选择器上传，下载使用 Android 授权位置，文件校验和一致。
 - [x] 新建目录、重命名、递归复制/移动/删除协议测试通过，界面删除确认可取消。
 - [x] 退出或进入后台后断开，重新进入后使用保存的凭据重新连接。
-- [x] Wi-Fi 不可用状态显示提示，并发出系统 Wi-Fi 设置操作（Compose UI 测试，未关闭用户手机网络）。
+- [x] Wi-Fi 不可用状态显示非阻塞提示，并发出系统 Wi-Fi 设置操作；未检测到局域网时也可直接尝试连接（Compose UI 测试，未关闭用户手机网络）。
+- [x] 设置页提供 E Ink 模式开关，开启后全应用灰度渲染；开关持久化（Compose UI 与仪器测试）。
+- [x] 设置页提供 EasyUpdate 地址输入与检查更新动作；地址规范化、更新包 SHA-256/包名/版本校验逻辑由单元测试覆盖；`http://192.168.95.55:19910` 公开接口连通性已确认。
 - [x] 手机 21:9 窄屏可滚动操作；平板 16:9 横屏采用侧栏与文件内容的双栏布局。
 - [x] 错误密码被拒绝；无响应服务器连接可被断开及时中止，后续重连正常。
 
@@ -84,6 +86,24 @@ Impacket 是协议测试服务器，`FILE_FS_FULL_SIZE_INFORMATION` 返回固定
 - 已复现导致偶发失败的 `DiskShare has already been closed`，连接状态现在同时检查 SMBJ 共享和底层 Socket；目录读取会丢弃关闭的共享并自动重连一次。下载文件在服务端拒绝读取属性时回退到仅请求 `FILE_READ_DATA`。真实共享回归仍只调用连接、目录、容量和断开，不包含任何写入或删除。
 
 SMBJ 0.14.0 的匿名 SMB3 登录遇到上游 #872 空 session key 问题，应用对空凭据使用 `AuthenticationContext.guest()`，真实共享只读回归已通过。Android 16 UI 自动化需要 Espresso 3.7.0，已显式锁定以避免旧版反射 `InputManager.getInstance()` 的失败。
+
+## 已执行的验证（2026-10-05）
+
+- `assembleDebug`、`assembleDebugAndroidTest`、`testDebugUnitTest` 和 `lintDebug` 成功；Lint 无错误，保留依赖版本和代码风格建议。构建版本提升为 `1.2.0 / 5`。
+- JVM 单元测试 10 个通过；新增 `EasyUpdateClientTest` 覆盖 EasyUpdate 服务地址规范化（去空格、去末尾斜杠、保留路径）与空串、缺协议、ftp、带凭据/查询/片段等非法地址的拒绝。
+- 在 Redmi Android 16 测试机（序列号 `b5b85793`）运行仪器测试：16 个测试中 11 个通过，包括新增的设置页 E Ink 开关/EasyUpdate 检查动作 UI 测试与设置持久化测试，以及既有凭据加密、传输历史、生命周期辅助、搜索/网格/下载历史等用例。
+- 5 个依赖 `smb://127.0.0.1:1445/TESTSHARE` 隔离服务的用例未能通过：本机 adb 服务位于 `127.0.0.1:5039` 的 SSH 隧道另一端，`adb reverse tcp:1445` 指向隧道对端而不是运行 Python 测试服务的电脑；测试机 Wi-Fi 为 `192.168.3.0/24`，与本机测试网段 `192.168.95.0/24` 不同，手机也未持有 USB 转发。失败均为 SMB2 negotiate 阶段的 EOF，属环境拓扑限制，与本次代码改动无关；隔离服务在本机通过认证、创建、上传、下载 SHA-256、重命名、列表、删除烟测。
+- 设备安装的 1.2.0 Debug APK 经 `aapt2 dump badging` 核对：包名 `com.zlight.sendtosmb`，`versionCode=5`，`versionName=1.2.0`，包含 `REQUEST_INSTALL_PACKAGES` 与 `FileProvider`。
+- EasyUpdate 服务 `http://192.168.95.55:19910` 从本机可访问：`GET /api/v1/announcements` 返回 200；`GET /api/v1/apps/com.zlight.sendtosmb/latest` 返回 404 `app_not_found`，说明客户端接入路径正确，待服务端注册应用并发布版本后即可在线检查更新。服务端后台使用 `admin/admin` 登录，公开 API 无需认证。
+- 本次未执行真实共享 `smb://192.168.95.55/windisk` 的只读回归，也未在服务端上传或发布 APK。
+
+## 已执行的验证（2026-10-06）
+
+- 按所有者选择，`release` 构建类型使用本机 Android 调试密钥签名（`app/build.gradle.kts` 中已注释说明对外发行需替换）。`assembleRelease` 成功，产物保存为 `releases/SendToSMB-1.2.0.apk`（16,009,731 字节）；`aapt2 dump badging` 核对包名 `com.zlight.sendtosmb`、`versionCode=5`、`versionName=1.2.0` 且非 debuggable，`apksigner` 确认为 Android Debug 证书。`assembleDebug`、`testDebugUnitTest`、`assembleDebugAndroidTest` 与 `lintDebug` 同时通过。
+- 设置页按反馈删除全部说明性文案，仅保留标题、控件和状态信息：页码副标题“显示与更新”、E Ink 描述、EasyUpdate 描述、地址帮助文字与“安装前校验 SHA-256”说明均已移除。
+- 已通过 `scripts/Publish-EasyUpdate.ps1` 在 `http://192.168.95.55:19910` 后台注册应用「SendToSMB」（ID 6），发布版本 `1.2.0 (5)`（release ID 9）。设置页调整后使用脚本的 `-Replace` 选项删除旧发布，并以同一版本号重新上传、发布。
+- 公开 API 对 `version_code=4` 返回 `update_available: true` 及正确的 `download_url`、`size`、`sha256`，对 `version_code=5` 返回 `update_available: false`；服务端下载、本机构建与测试机已安装 `base.apk` 三方 SHA-256 均为 `ae761e6d0f6cb8e0ae85b650e7bdb91d77794147c885d18632586c5528e7b9ba`。
+- 测试机 `b5b85793` 已完成覆盖安装（与调试版签名相同，应用数据保留）：`dumpsys package` 显示 `versionCode=5`、`versionName=1.2.0`、无 DEBUGGABLE 标记；应用启动正常，设置页检查更新显示「已是最新版本（1.2.0 · 5）」；E Ink 开关开启后全界面变为灰度，验证后已关闭。
 
 手工复现仪器测试（先运行隔离服务）：
 

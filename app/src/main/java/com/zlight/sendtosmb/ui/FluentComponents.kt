@@ -76,10 +76,10 @@ internal fun NetworkNotice(onWifi: () -> Unit) {
             Icon(Icons.Outlined.WifiOff, null, Modifier.size(20.dp), tint = Fluent.Orange)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("请连接局域网 Wi-Fi", style = MaterialTheme.typography.titleSmall, color = Fluent.Orange)
-                Text("手机与共享设备需在同一网络", style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
+                Text("未检测到局域网连接", style = MaterialTheme.typography.titleSmall, color = Fluent.Orange)
+                Text("仍可直接尝试连接 SMB 服务器", style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
             }
-            TextButton(onClick = onWifi) { Text("设置") }
+            TextButton(onClick = onWifi) { Text("网络设置") }
         }
     }
 }
@@ -109,12 +109,14 @@ internal fun CapacityCard(capacity: UiCapacity?, name: String, connected: Boolea
 }
 
 @Composable
-internal fun PageHeading(title: String, subtitle: String, modifier: Modifier = Modifier, trailing: @Composable (() -> Unit)? = null) {
+internal fun PageHeading(title: String, subtitle: String = "", modifier: Modifier = Modifier, trailing: @Composable (() -> Unit)? = null) {
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.headlineMedium)
-            Spacer(Modifier.height(3.dp))
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
+            if (subtitle.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
+            }
         }
         trailing?.invoke()
     }

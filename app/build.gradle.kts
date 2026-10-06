@@ -10,8 +10,8 @@ android {
         applicationId = "com.zlight.sendtosmb"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.1.2"
+        versionCode = 5
+        versionName = "1.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
@@ -21,7 +21,14 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
     packaging { resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/INDEX.LIST", "META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA") }
-    buildTypes { release { isMinifyEnabled = false } }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            // No official release key is configured yet. Signing with the local debug key lets
+            // test devices update in place; configure a private keystore before public distribution.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
 }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.06.00"))
@@ -33,6 +40,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
     implementation("androidx.documentfile:documentfile:1.1.0")
+    implementation("androidx.core:core:1.18.0")
     implementation("com.hierynomus:smbj:0.14.0")
     implementation("org.slf4j:slf4j-nop:2.0.16")
     debugImplementation("androidx.compose.ui:ui-tooling")

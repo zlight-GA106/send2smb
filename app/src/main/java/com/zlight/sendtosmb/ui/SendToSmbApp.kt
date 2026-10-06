@@ -27,6 +27,7 @@ private val destinations = listOf(
     AppDestination("文件管理", Icons.Outlined.FolderOpen),
     AppDestination("传输", Icons.Outlined.SwapVert),
     AppDestination("连接", Icons.Outlined.Storage),
+    AppDestination("设置", Icons.Outlined.Settings),
 )
 
 @Composable
@@ -48,7 +49,7 @@ fun SendToSmbApp(state: UiState, onAction: (UiAction) -> Unit) {
         LaunchedEffect(state.connected) { if (state.connected && showProfileEditor) showProfileEditor = false }
         BackHandler(destination != 0 && !showProfileEditor) { destination = 0 }
 
-        BoxWithConstraints(Modifier.fillMaxSize().background(Fluent.Background)) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(Fluent.Background).einkGrayscale(state.einkMode)) {
             val wide = maxWidth >= 840.dp
             Scaffold(
                 containerColor = Fluent.Background,
@@ -103,6 +104,7 @@ fun SendToSmbApp(state: UiState, onAction: (UiAction) -> Unit) {
                             3 -> ConnectionsPage(state, wide, onAction,
                                 onAdd = { editingProfile = null; showProfileEditor = true },
                                 onEdit = { editingProfile = it; showProfileEditor = true })
+                            4 -> SettingsPage(state, wide, onAction)
                         }
                     }
                 }
@@ -178,7 +180,7 @@ private fun AppSidebar(state: UiState, selected: Int, onDestination: (Int) -> Un
         Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Wifi, null, Modifier.size(18.dp), tint = if (state.networkAvailable) Fluent.Green else Fluent.Orange)
             Spacer(Modifier.width(8.dp))
-            Text(if (state.networkAvailable) "局域网访问" else "等待 Wi-Fi 连接", style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
+            Text(if (state.networkAvailable) "局域网访问" else "未检测到局域网", style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
         }
         Text("离开自动断开 · 返回自动连接", Modifier.padding(start = 10.dp, top = 8.dp), style = MaterialTheme.typography.labelSmall, color = Fluent.Muted)
     }

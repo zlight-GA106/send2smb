@@ -20,6 +20,26 @@ data class UiFile(
 
 data class UiCapacity(val total: Long, val free: Long)
 
+data class UiUpdateInfo(
+    val versionName: String,
+    val versionCode: Long,
+    val mandatory: Boolean,
+    val releaseNotes: String,
+    val size: Long,
+    val downloadUrl: String,
+    val sha256: String,
+)
+
+data class UiUpdateState(
+    val serverUrl: String = "",
+    val checking: Boolean = false,
+    val info: UiUpdateInfo? = null,
+    val status: String? = null,
+    val downloading: Boolean = false,
+    val progress: Float = 0f,
+    val verifiedPath: String? = null,
+)
+
 data class UiTransfer(
     val id: String,
     val name: String,
@@ -48,6 +68,8 @@ data class UiState(
     val clipboardCount: Int = 0,
     val downloadDirectoryUri: String? = null,
     val downloadDirectoryName: String? = null,
+    val einkMode: Boolean = false,
+    val update: UiUpdateState = UiUpdateState(),
 )
 
 sealed interface UiAction {
@@ -68,6 +90,12 @@ sealed interface UiAction {
     data object ClearCompletedTransfers : UiAction
     data object SelectDownloadDirectory : UiAction
     data object ClearDownloadDirectory : UiAction
+    data class SetEinkMode(val enabled: Boolean) : UiAction
+    data class CheckUpdate(val serverUrl: String) : UiAction
+    data object DownloadUpdate : UiAction
+    data object CancelUpdateDownload : UiAction
+    data object InstallUpdate : UiAction
+    data class ReportUpdateStatus(val message: String) : UiAction
     data object OpenWifiSettings : UiAction
     data object DismissMessage : UiAction
 }

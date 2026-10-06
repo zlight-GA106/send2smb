@@ -13,8 +13,8 @@ class ExplorerUiTest {
     @Test fun disconnectedScreenOffersSetupAndWifiSettings() {
         val actions = mutableListOf<UiAction>()
         compose.setContent { SendToSmbApp(UiState(networkAvailable = false), actions::add) }
-        compose.onNodeWithText("请连接局域网 Wi-Fi").assertIsDisplayed()
-        compose.onNodeWithText("设置").performClick()
+        compose.onNodeWithText("未检测到局域网连接").assertIsDisplayed()
+        compose.onNodeWithText("网络设置").performClick()
         compose.runOnIdle { assertTrue(actions.contains(UiAction.OpenWifiSettings)) }
         compose.onNodeWithText("添加网络位置").performClick()
         compose.onNodeWithText("SMB 地址").assertIsDisplayed()
@@ -25,6 +25,21 @@ class ExplorerUiTest {
             val saved = actions.filterIsInstance<UiAction.SaveProfile>().single()
             assertEquals("测试连接", saved.profile.name)
             assertTrue(saved.connectNow)
+        }
+    }
+
+    @Test fun settingsPageTogglesEinkAndChecksUpdates() {
+        val actions = mutableListOf<UiAction>()
+        compose.setContent { SendToSmbApp(UiState(update = UiUpdateState(serverUrl = "http://192.168.95.55:19910")), actions::add) }
+        compose.onNodeWithText("设置").performClick()
+        compose.onNodeWithText("E Ink 模式").assertIsDisplayed()
+        compose.onNodeWithText("EasyUpdate 更新").assertIsDisplayed()
+        compose.onNodeWithText("服务地址").assertIsDisplayed()
+        compose.onNode(isToggleable()).performClick()
+        compose.onNodeWithText("检查更新").performClick()
+        compose.runOnIdle {
+            assertEquals(true, actions.filterIsInstance<UiAction.SetEinkMode>().single().enabled)
+            assertEquals("http://192.168.95.55:19910", actions.filterIsInstance<UiAction.CheckUpdate>().single().serverUrl)
         }
     }
 

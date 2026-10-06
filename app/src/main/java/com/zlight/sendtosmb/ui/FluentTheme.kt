@@ -6,7 +6,14 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +76,18 @@ internal fun FluentTheme(content: @Composable () -> Unit) {
         shapes = Shapes(extraSmall = Fluent.Control, small = Fluent.Control, medium = Fluent.Radius, large = Fluent.Radius, extraLarge = Fluent.Radius),
         content = content,
     )
+}
+
+/** Renders the composable content in grayscale (luminance) when E Ink mode is on. */
+internal fun Modifier.einkGrayscale(enabled: Boolean): Modifier = if (!enabled) this else drawWithCache {
+    val paint = Paint().apply { colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }) }
+    onDrawWithContent {
+        drawIntoCanvas { canvas ->
+            canvas.saveLayer(Rect(0f, 0f, size.width, size.height), paint)
+            drawContent()
+            canvas.restore()
+        }
+    }
 }
 
 internal fun formatSize(bytes: Long): String {

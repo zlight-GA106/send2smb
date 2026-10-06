@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.withResumed
@@ -20,6 +21,7 @@ import com.zlight.sendtosmb.ui.UiAction
 import com.zlight.sendtosmb.ui.UiFile
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val model: ExplorerViewModel by viewModels()
@@ -90,6 +92,7 @@ class MainActivity : ComponentActivity() {
                         model.dispatch(action)
                     }
                     UiAction.OpenWifiSettings -> startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                    UiAction.InstallUpdate -> installVerifiedUpdate(state.update.verifiedPath)
                     else -> model.dispatch(action)
                 }
             }
@@ -98,6 +101,30 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() { super.onStart(); model.onForeground() }
     override fun onStop() { if (!isChangingConfigurations) model.onBackground(); super.onStop() }
+
+    private fun installVerifiedUpdate(path: String?) {
+        if (path.isNullOrBlank()) {
+            model.dispatch(UiAction.ReportUpdateStatus("更新包尚未下载"))
+            return
+        }
+        val file = File(path)
+        if (!file.exists()) {
+            model.dispatch(UiAction.ReportUpdateStatus("更新包已不存在，请重新下载"))
+            return
+        }
+        if (!packageManager.canRequestPackageInstalls()) {
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName")))
+            model.dispatch(UiAction.ReportUpdateStatus("请允许安装未知来源应用，然后再次点击“安装更新”"))
+            return
+        }
+        runCatching {
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        }.onFailure {
+            model.dispatch(UiAction.ReportUpdateStatus("无法打开系统安装程序"))
+        }
+    }
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("uploadPath", uploadPath)

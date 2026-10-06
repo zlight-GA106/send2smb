@@ -82,6 +82,25 @@ class LifecycleAndCredentialsTest {
         }
     }
 
+    @Test fun einkModeAndUpdateServerArePersisted() {
+        val settings = SettingsStore(app)
+        val previous = settings.read()
+        try {
+            settings.writeEink(true)
+            settings.writeUpdateServerUrl("http://192.168.95.55:19910")
+            val read = settings.read()
+            assertTrue(read.einkMode)
+            assertEquals("http://192.168.95.55:19910", read.updateServerUrl)
+            assertTrue(read.deviceId.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")))
+            assertEquals(read.deviceId, settings.read().deviceId)
+            settings.writeEink(false)
+            assertFalse(settings.read().einkMode)
+        } finally {
+            settings.writeEink(previous.einkMode)
+            settings.writeUpdateServerUrl(previous.updateServerUrl)
+        }
+    }
+
     private fun await(condition: () -> Boolean) {
         val deadline = System.nanoTime() + 35_000_000_000L
         while (!condition() && System.nanoTime() < deadline) Thread.sleep(100)
