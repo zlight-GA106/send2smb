@@ -9,6 +9,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -20,6 +22,17 @@ internal fun SettingsPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = if (wide) 28.dp else 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { PageHeading("设置") }
         item { EinkModeCard(state.einkMode, onAction) }
+        item {
+            FluentCard(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AccentIcon(Icons.Outlined.CloudUpload, 42)
+                    Spacer(Modifier.width(12.dp))
+                    Text("在后台继续运行", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    Checkbox(state.backgroundTransfers, onCheckedChange = { onAction(UiAction.SetBackgroundTransfers(it)) },
+                        modifier = Modifier.semantics { contentDescription = "在后台继续运行" })
+                }
+            }
+        }
         item { UpdateCard(state, serverUrl, { serverUrl = it }, onAction) }
     }
 }
@@ -31,7 +44,8 @@ private fun EinkModeCard(enabled: Boolean, onAction: (UiAction) -> Unit) {
             AccentIcon(Icons.Outlined.Brightness6, 42)
             Spacer(Modifier.width(12.dp))
             Text("E Ink 模式", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            Switch(enabled, onCheckedChange = { onAction(UiAction.SetEinkMode(it)) })
+            Switch(enabled, onCheckedChange = { onAction(UiAction.SetEinkMode(it)) },
+                modifier = Modifier.semantics { contentDescription = "E Ink 模式" })
         }
     }
 }

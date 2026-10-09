@@ -1,6 +1,8 @@
 package com.zlight.sendtosmb.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -12,14 +14,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun TransfersPage(state: UiState, wide: Boolean, onAction: (UiAction) -> Unit) {
     val active = state.transfers.filter { it.status == "running" || it.status == "queued" }
     val history = state.transfers.filterNot { it.status == "running" || it.status == "queued" }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = if (wide) 28.dp else 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item {
-            PageHeading("传输", if (active.isEmpty()) "传输记录默认保存在本机" else "${active.size} 个任务正在进行") {
+        stickyHeader {
+            PageHeading("传输", if (active.isEmpty()) "传输记录默认保存在本机" else "${active.size} 个任务正在进行",
+                modifier = Modifier.background(Fluent.Background).padding(vertical = 8.dp)) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("平均速度", style = MaterialTheme.typography.labelSmall, color = Fluent.Secondary)
+                    Text(formatSpeed(state.averageBytesPerSecond), style = MaterialTheme.typography.titleSmall, color = Fluent.Blue)
+                }
                 if (history.isNotEmpty()) ToolIcon(Icons.Outlined.DeleteSweep, "清空传输记录") { onAction(UiAction.ClearCompletedTransfers) }
             }
         }
@@ -47,7 +56,8 @@ internal fun TransfersPage(state: UiState, wide: Boolean, onAction: (UiAction) -
             Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
                 Icon(Icons.Outlined.Info, null, Modifier.size(17.dp), tint = Fluent.Muted)
                 Spacer(Modifier.width(8.dp))
-                Text("传输期间请保持应用在前台。离开应用会断开 SMB 连接，未完成的任务将停止。", style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
+                Text(if (state.backgroundTransfers) "已允许后台传输，锁屏或切换应用后任务会继续运行。" else "在设置中勾选“在后台继续运行”，可在锁屏或切换应用后继续传输。",
+                    style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary)
             }
         }
     }
@@ -117,6 +127,12 @@ private fun TransferCard(transfer: UiTransfer, onCancel: () -> Unit = {}, onRepe
                 Spacer(Modifier.height(8.dp))
                 Text(formatSize(if (complete) transfer.total else transfer.done), style = MaterialTheme.typography.bodySmall, color = Fluent.Muted)
             }
+            Spacer(Modifier.height(7.dp))
+            Text(when (transfer.status) {
+                "queued" -> "速度 —"
+                "running" -> "速度 ${formatSpeed(transfer.bytesPerSecond)}"
+                else -> "平均速度 ${formatSpeed(transfer.averageBytesPerSecond)}"
+            }, style = MaterialTheme.typography.bodySmall, color = if (active) Fluent.Blue else Fluent.Secondary)
             if (!active && transfer.direction == "download" && transfer.sourceFile != null) {
                 Spacer(Modifier.height(10.dp))
                 TextButton(onClick = onRepeatDownload, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)) {
@@ -126,5 +142,15 @@ private fun TransferCard(transfer: UiTransfer, onCancel: () -> Unit = {}, onRepe
                 }
             }
         }
+    }
+}
+
+fun formatSpeed(bytesPerSecond: Double): String {
+    val speed = bytesPerSecond.takeIf { it.isFinite() && it >= 0 } ?: 0.0
+    return when {
+        speed >= 1024 * 1024 * 1024 -> String.format(Locale.getDefault(), "%.1f GB/s", speed / (1024 * 1024 * 1024))
+        speed >= 1024 * 1024 -> String.format(Locale.getDefault(), "%.1f MB/s", speed / (1024 * 1024))
+        speed >= 1024 -> String.format(Locale.getDefault(), "%.1f KB/s", speed / 1024)
+        else -> String.format(Locale.getDefault(), "%.0f B/s", speed)
     }
 }

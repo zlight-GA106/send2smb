@@ -64,7 +64,7 @@ class LifecycleAndCredentialsTest {
         val previousDirectory = transferStore.readDownloadDirectory()
         val source = UiFile("private-report.pdf", "Documents/private-report.pdf", false, 4096)
         val transfer = UiTransfer("history-encryption-test", source.name, "download", 4096, 4096,
-            "completed", sourceFile = source, profileId = "profile-for-repeat")
+            "completed", sourceFile = source, profileId = "profile-for-repeat", averageBytesPerSecond = 2048.0)
         val directory = SavedDownloadDirectory("content://test-provider/tree/private-downloads", "Private downloads")
         try {
             transferStore.write(listOf(transfer))
@@ -87,16 +87,21 @@ class LifecycleAndCredentialsTest {
         val previous = settings.read()
         try {
             settings.writeEink(true)
+            settings.writeBackgroundTransfers(true)
             settings.writeUpdateServerUrl("http://192.168.95.55:19910")
             val read = settings.read()
             assertTrue(read.einkMode)
+            assertTrue(read.backgroundTransfers)
             assertEquals("http://192.168.95.55:19910", read.updateServerUrl)
             assertTrue(read.deviceId.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")))
             assertEquals(read.deviceId, settings.read().deviceId)
             settings.writeEink(false)
+            settings.writeBackgroundTransfers(false)
             assertFalse(settings.read().einkMode)
+            assertFalse(settings.read().backgroundTransfers)
         } finally {
             settings.writeEink(previous.einkMode)
+            settings.writeBackgroundTransfers(previous.backgroundTransfers)
             settings.writeUpdateServerUrl(previous.updateServerUrl)
         }
     }

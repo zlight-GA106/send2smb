@@ -51,6 +51,8 @@ data class UiTransfer(
     val createdMillis: Long = System.currentTimeMillis(),
     val sourceFile: UiFile? = null,
     val profileId: String? = null,
+    val bytesPerSecond: Double = 0.0,
+    val averageBytesPerSecond: Double = 0.0,
 )
 
 data class UiState(
@@ -69,6 +71,9 @@ data class UiState(
     val downloadDirectoryUri: String? = null,
     val downloadDirectoryName: String? = null,
     val einkMode: Boolean = false,
+    val backgroundTransfers: Boolean = false,
+    val transferBusy: Boolean = false,
+    val averageBytesPerSecond: Double = 0.0,
     val update: UiUpdateState = UiUpdateState(),
 )
 
@@ -91,6 +96,7 @@ sealed interface UiAction {
     data object SelectDownloadDirectory : UiAction
     data object ClearDownloadDirectory : UiAction
     data class SetEinkMode(val enabled: Boolean) : UiAction
+    data class SetBackgroundTransfers(val enabled: Boolean) : UiAction
     data class CheckUpdate(val serverUrl: String) : UiAction
     data object DownloadUpdate : UiAction
     data object CancelUpdateDownload : UiAction

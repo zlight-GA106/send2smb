@@ -51,6 +51,7 @@ class TransferStore(context: Context) {
                 createdMillis = item.optLong("created", System.currentTimeMillis()),
                 sourceFile = source,
                 profileId = item.optString("profileId").takeIf { it.isNotBlank() },
+                averageBytesPerSecond = item.optDouble("averageSpeed", 0.0),
             )
         }
     }
@@ -69,6 +70,7 @@ class TransferStore(context: Context) {
                     .put("error", transfer.error ?: "")
                     .put("created", transfer.createdMillis)
                     .put("profileId", transfer.profileId ?: "")
+                    .put("averageSpeed", transfer.averageBytesPerSecond)
                 transfer.sourceFile?.let { source ->
                     item.put("source", JSONObject()
                         .put("name", source.name)

@@ -46,18 +46,7 @@ internal fun HomePage(
                         Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = if (wide) 36.dp else 28.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Box(Modifier.width(154.dp).height(96.dp), contentAlignment = Alignment.Center) {
-                            Box(Modifier.size(90.dp).clip(Fluent.Radius).background(Fluent.BlueTint), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Outlined.FolderOpen, null, Modifier.size(52.dp), tint = Fluent.Blue)
-                            }
-                            Surface(
-                                Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).size(36.dp),
-                                shape = Fluent.Control,
-                                color = Color.White,
-                                border = BorderStroke(1.dp, Fluent.Border),
-                                shadowElevation = 2.dp,
-                            ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Wifi, null, Modifier.size(20.dp), tint = Fluent.Blue) } }
-                        }
+                        ConnectionIllustration()
                         Spacer(Modifier.height(22.dp))
                         Text(if (state.connecting) "正在连接你的文件" else "连接，让文件触手可及", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(24.dp))
@@ -101,8 +90,28 @@ internal fun HomePage(
                     onOpenFiles()
                 }
             }
+            item {
+                Column(Modifier.fillMaxWidth().padding(vertical = if (wide) 48.dp else 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    ConnectionIllustration()
+                    Spacer(Modifier.height(22.dp))
+                    Text("连接，让文件触手可及", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+                }
+            }
         }
         item { Spacer(Modifier.height(4.dp)) }
+    }
+}
+
+@Composable
+private fun ConnectionIllustration() {
+    Box(Modifier.width(154.dp).height(96.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(90.dp).clip(Fluent.Radius).background(Fluent.BlueTint), contentAlignment = Alignment.Center) {
+            Icon(Icons.Outlined.FolderOpen, null, Modifier.size(52.dp), tint = Fluent.Blue)
+        }
+        Surface(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).size(36.dp),
+            shape = Fluent.Control, color = Color.White, border = BorderStroke(1.dp, Fluent.Border), shadowElevation = 2.dp) {
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Wifi, null, Modifier.size(20.dp), tint = Fluent.Blue) }
+        }
     }
 }
 

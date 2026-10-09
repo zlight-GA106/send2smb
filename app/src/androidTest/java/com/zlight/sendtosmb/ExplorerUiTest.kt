@@ -35,10 +35,12 @@ class ExplorerUiTest {
         compose.onNodeWithText("E Ink 模式").assertIsDisplayed()
         compose.onNodeWithText("EasyUpdate 更新").assertIsDisplayed()
         compose.onNodeWithText("服务地址").assertIsDisplayed()
-        compose.onNode(isToggleable()).performClick()
+        compose.onNodeWithContentDescription("E Ink 模式").performClick()
+        compose.onNodeWithContentDescription("在后台继续运行").assertIsOff().performClick()
         compose.onNodeWithText("检查更新").performClick()
         compose.runOnIdle {
             assertEquals(true, actions.filterIsInstance<UiAction.SetEinkMode>().single().enabled)
+            assertEquals(true, actions.filterIsInstance<UiAction.SetBackgroundTransfers>().single().enabled)
             assertEquals("http://192.168.95.55:19910", actions.filterIsInstance<UiAction.CheckUpdate>().single().serverUrl)
         }
     }
@@ -76,6 +78,7 @@ class ExplorerUiTest {
 
         compose.onNodeWithText("文件").assertIsDisplayed()
         compose.onNodeWithText("//127.0.0.1:1445/TESTSHARE").assertIsDisplayed()
+        compose.onNodeWithText("连接，让文件触手可及").assertIsDisplayed()
         compose.onNodeWithText("文件管理").performClick()
         compose.onNodeWithText("搜索文件或文件夹").assertIsDisplayed()
         compose.onNodeWithText("传输").performClick()
@@ -89,5 +92,18 @@ class ExplorerUiTest {
             assertEquals(listOf(source), repeated.files)
             assertEquals(profile.id, repeated.profileId)
         }
+    }
+
+    @Test fun transferHeaderAndTasksShowSpeeds() {
+        compose.setContent { SendToSmbApp(UiState(backgroundTransfers = true, transferBusy = true,
+            averageBytesPerSecond = 2.0 * 1024 * 1024, transfers = listOf(
+                UiTransfer("running", "video.mp4", "upload", done = 1024, total = 4096, status = "running", bytesPerSecond = 1024.0),
+                UiTransfer("queued", "photo.jpg", "upload", total = 4096))), onAction = {}) }
+        compose.onNodeWithText("传输").performClick()
+        compose.onNodeWithText("平均速度").assertIsDisplayed()
+        compose.onNodeWithText("2.0 MB/s").assertIsDisplayed()
+        compose.onNodeWithText("速度 1.0 KB/s").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("速度 —").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("已允许后台传输，锁屏或切换应用后任务会继续运行。").performScrollTo().assertIsDisplayed()
     }
 }

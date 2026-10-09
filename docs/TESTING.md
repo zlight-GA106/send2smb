@@ -1,5 +1,21 @@
 # SendToSMB 测试说明
 
+## 已执行的验证（2026-10-09，1.3.0 / 6）
+
+- 使用 JDK 17.0.20.1 执行 `assembleRelease`、`assembleDebug`、`assembleDebugAndroidTest`、`testDebugUnitTest` 和 `lintDebug`，全部成功；Lint 无错误。当前 Android Studio 捆绑 JBR 25 与工程现有 Kotlin / Gradle 版本不兼容，改为显式传入 JDK 17 构建，未调整依赖版本。
+- 13 项 JVM 单元测试通过。新增 3 项速度测试覆盖小文件准备 / 切换耗时计入批量平均、停滞时实时速度归零、短任务与未知大小按实际传输字节计速。
+- 新增后台传输仪器测试：开启后销毁 Activity 继续上传并核对 SHA-256，关闭后台选项后取消任务，通知取消停止队列。UI 测试增加后台复选框、连接后宣传文字、任务速度与顶栏平均速度断言，设置 / 加密历史测试增加后台开关和平均速度持久化。测试 APK 已编译通过；本次没有连接的手机，Android 15（API 35）模拟器因未安装硬件加速驱动无法启动，`-accel off` 软件模式以 `0xC0000005` 崩溃，因此这些设备测试未运行。
+- `aapt2 dump badging` 确认发布 APK 包名 `com.zlight.sendtosmb`、版本 `1.3.0 / 6`、最低 API 26、目标 API 36，声明 dataSync 前台服务、通知、唤醒锁及 Wi-Fi 锁所需权限；Release APK 无 DEBUGGABLE 标记。
+- 从 EasyUpdate 下载已发布的 1.2.0 APK 并与新包比较 `apksigner` 签名证书，SHA-256 均为 `383337cdc9552808990eb825a28c6c768bc4c479663fd04b71e67f409e2329ef`，保持覆盖升级的签名兼容性。
+- 已通过 `scripts/Publish-EasyUpdate.ps1` 将 1.3.0 (6) 发布到 `http://192.168.95.55:19910`（应用 ID 6，后台 release ID 11）。公开接口对 `version_code=5` 返回更新，对 `version_code=6` 返回已是最新；服务端下载包、本地 Release APK 及接口校验值一致：`620aead9ce5e745c4b98a2e6d4b4a80a034709663e0c9d98b0ba15d75c3e2d79`，大小 16,026,899 字节。
+- 本次未访问真实 SMB 文件内容，也未修改用户的 SMB 共享。设备仪器测试仅对 `127.0.0.1:1445/TESTSHARE` 的隔离目录执行写入。
+
+复现新增后台传输验收：启动隔离 SMB 服务，连接 Android 设备并安装 Debug / AndroidTest APK，再运行：
+
+```powershell
+adb shell am instrument -w -e class com.zlight.sendtosmb.BackgroundTransferTest com.zlight.sendtosmb.test/androidx.test.runner.AndroidJUnitRunner
+```
+
 ## 本机工具和设备
 
 2026-09-06 检测到一台通过 USB 调试授权的测试机：型号 `23013RK75C` / `mondrian`，Android 16 (API 36)，物理分辨率 1440 × 3200，density 560。手机 Wi-Fi 已连接。

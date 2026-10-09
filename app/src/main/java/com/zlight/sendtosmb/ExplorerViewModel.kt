@@ -1,6 +1,7 @@
 package com.zlight.sendtosmb
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
@@ -38,6 +39,14 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     private var autoConnect = true
     private var generation = 0
     private val jobs = mutableSetOf<Job>()
+    private val transferJobs = mutableSetOf<Job>()
+    private val taskSpeeds = ConcurrentHashMap<String, TransferSpeedMeter>()
+    @Volatile private var batchSpeed: TransferSpeedMeter? = null
+    private var speedTicker: Job? = null
+    private var backgroundServiceRequested = false
+    private var backgroundServiceFailed = false
+    private data class UploadGrant(var users: Int, val owned: Boolean)
+    private val uploadGrants = mutableMapOf<Uri, UploadGrant>()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private var clipboard = emptyList<UiFile>()
     private var clipboardMove = false
@@ -63,7 +72,8 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }.onFailure { mutable.update { it.copy(message = "保存的下载目录已失效，请重新选择") } }
         runCatching { settings.read() }.onSuccess { saved ->
             deviceId = saved.deviceId
-            mutable.update { it.copy(einkMode = saved.einkMode, update = it.update.copy(serverUrl = saved.updateServerUrl)) }
+            mutable.update { it.copy(einkMode = saved.einkMode, backgroundTransfers = saved.backgroundTransfers,
+                update = it.update.copy(serverUrl = saved.updateServerUrl)) }
         }
         mutable.update { it.copy(networkAvailable = network.available) }
         network.start()
@@ -71,27 +81,68 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
 
     fun onForeground() {
         foreground = true
+        backgroundServiceFailed = false
         autoConnect = true
         mutable.update { it.copy(networkAvailable = network.available) }
+        syncBackgroundService()
         reconnect()
     }
 
     fun onBackground() {
         foreground = false
-        closeSession()
+        if (!canTransferInBackground()) closeSession()
     }
+
+    private fun canTransferInBackground() = mutable.value.backgroundTransfers &&
+        mutable.value.transferBusy && backgroundServiceRequested
+
+    private fun syncBackgroundService() {
+        if (mutable.value.backgroundTransfers && mutable.value.transferBusy) {
+            if (!backgroundServiceRequested && !backgroundServiceFailed && foreground) {
+                runCatching { BackgroundTransferService.start(getApplication()) }
+                    .onSuccess { backgroundServiceRequested = true }
+                    .onFailure(::onBackgroundServiceFailed)
+            }
+        } else if (backgroundServiceRequested) {
+            backgroundServiceRequested = false
+            BackgroundTransferService.stop(getApplication())
+        }
+    }
+
+    fun onBackgroundServiceFailed(error: Throwable) {
+        Log.e(TAG, "Background transfer service failed", error)
+        backgroundServiceRequested = false
+        backgroundServiceFailed = true
+        mutable.update { it.copy(message = "后台传输服务无法启动，请保持应用在前台传输") }
+        if (!foreground) closeSession()
+    }
+
+    fun onBackgroundServiceStopped() {
+        backgroundServiceRequested = false
+        if (!foreground) closeSession()
+        else syncBackgroundService()
+    }
+
+    fun stopTransfers(message: String) { closeSession(message) }
 
     private fun closeSession(message: String? = null) {
         generation++
         jobs.toList().forEach { it.cancel() }
         jobs.clear()
+        transferJobs.clear()
+        speedTicker?.cancel()
+        speedTicker = null
+        taskSpeeds.clear()
+        batchSpeed = null
+        BackgroundTransferService.stop(getApplication())
+        backgroundServiceRequested = false
         val old = repository
         repository = null
         if (old != null) CoroutineScope(Dispatchers.IO).launch { runCatching { old.disconnect() } }
         val hadActiveTransfers = mutable.value.transfers.any { it.status == "running" || it.status == "queued" }
-        mutable.update { current -> current.copy(connected = false, connecting = false, loading = false,
+        mutable.update { current -> current.copy(connected = false, connecting = false, loading = false, transferBusy = false,
             message = message ?: current.message,
-            transfers = current.transfers.map { if (it.status in setOf("running", "queued")) it.copy(status = "cancelled", error = "连接关闭，传输已停止") else it }) }
+            transfers = current.transfers.map { if (it.status in setOf("running", "queued")) it.copy(status = "cancelled", bytesPerSecond = 0.0, error = "连接关闭，传输已停止") else it }) }
         if (hadActiveTransfers) persistTransfers()
     }
 
@@ -101,7 +152,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     }
 
     private suspend fun ensureConnection(): SmbRepository {
-        check(foreground) { "应用已退出前台" }
+        check(foreground || canTransferInBackground()) { "应用已退出前台" }
         repository?.let { current ->
             if (mutable.value.connected && current.isConnected) return current
             repository = null
@@ -129,7 +180,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun work(block: suspend () -> Unit) {
+    private fun work(transferWork: Boolean = false, block: suspend () -> Unit): Job {
         val expected = generation
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
@@ -146,8 +197,34 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
             }
         }
         jobs.add(job)
-        job.invokeOnCompletion { viewModelScope.launch { jobs.remove(job) } }
+        if (transferWork) {
+            if (transferJobs.isEmpty()) {
+                batchSpeed = TransferSpeedMeter()
+                mutable.update { it.copy(transferBusy = true, averageBytesPerSecond = 0.0) }
+                speedTicker = viewModelScope.launch {
+                    while (isActive) {
+                        delay(500)
+                        refreshSpeeds()
+                    }
+                }
+            }
+            transferJobs.add(job)
+            syncBackgroundService()
+        }
+        job.invokeOnCompletion { viewModelScope.launch {
+            jobs.remove(job)
+            if (transferJobs.remove(job) && transferJobs.isEmpty()) {
+                refreshSpeeds()
+                speedTicker?.cancel()
+                speedTicker = null
+                batchSpeed = null
+                mutable.update { it.copy(transferBusy = false) }
+                syncBackgroundService()
+                if (!foreground) closeSession()
+            }
+        } }
         job.start()
+        return job
     }
 
     private suspend fun reload(path: String = mutable.value.path) {
@@ -247,6 +324,15 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                     .onSuccess { mutable.update { it.copy(einkMode = action.enabled) } }
                     .onFailure { mutable.update { state -> state.copy(message = explain(it)) } }
             }
+            is UiAction.SetBackgroundTransfers -> {
+                runCatching { settings.writeBackgroundTransfers(action.enabled) }
+                    .onSuccess {
+                        mutable.update { it.copy(backgroundTransfers = action.enabled) }
+                        syncBackgroundService()
+                        if (!foreground && !canTransferInBackground()) closeSession()
+                    }
+                    .onFailure { mutable.update { state -> state.copy(message = explain(it)) } }
+            }
             is UiAction.CheckUpdate -> checkForUpdate(action.serverUrl)
             UiAction.DownloadUpdate -> downloadUpdate()
             UiAction.CancelUpdateDownload -> updateCancel.set(true)
@@ -313,7 +399,18 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     fun upload(uris: List<Uri>, destination: String) {
         if (uris.isEmpty()) return
         val resolver = getApplication<Application>().contentResolver
-        work {
+        // Retain each selected document until its batch finishes, including Activity destruction.
+        val retained = uris.distinct()
+        retained.forEach { uri ->
+            val grant = uploadGrants[uri]
+            if (grant != null) grant.users++
+            else {
+                val owned = resolver.persistedUriPermissions.none { it.uri == uri && it.isReadPermission } &&
+                    runCatching { resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }.isSuccess
+                uploadGrants[uri] = UploadGrant(1, owned)
+            }
+        }
+        val job = work(transferWork = true) {
             val metadata = withContext(Dispatchers.IO) {
                 uris.map { uri ->
                     var name = "上传文件"; var size = -1L
@@ -340,6 +437,17 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
             reload()
             reportTransfers(items.map { it.third }, "上传")
         }
+        job.invokeOnCompletion {
+            viewModelScope.launch {
+                retained.forEach { uri ->
+                    val grant = uploadGrants[uri] ?: return@forEach
+                    if (--grant.users == 0) {
+                        uploadGrants.remove(uri)
+                        if (grant.owned) runCatching { resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                    }
+                }
+            }
+        }
     }
 
     fun download(files: List<UiFile>, treeUri: Uri, requestedProfileId: String? = null) {
@@ -357,7 +465,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }
         val profileId = requestedProfileId ?: mutable.value.currentProfileId
         val items = files.map { file -> file to newTransfer(file.name, "download", if (file.isDirectory) -1 else file.size, file, profileId) }
-        work {
+        work(transferWork = true) {
             val smb = connectionForTransfers(items.map { it.second })
             for ((file, id) in items) transfer(id) { isCancelled, progress ->
                 withContext(Dispatchers.IO) {
@@ -430,23 +538,44 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         val context = currentCoroutineContext()
         val isCancelled = { !context.isActive || cancelled.contains(id) }
         var lastUpdate = 0L
+        var lastBytes = 0L
+        val speed = TransferSpeedMeter()
+        val batch = batchSpeed
+        taskSpeeds[id] = speed
         try {
             if (isCancelled()) throw CancellationException()
             updateTransfer(id) { it.copy(status = "running") }
             block(isCancelled) { done, total ->
+                val delta = (done - lastBytes).coerceAtLeast(0)
+                speed.add(delta)
+                batch?.add(delta)
+                lastBytes = done
                 val now = System.nanoTime()
                 if (now - lastUpdate > 100_000_000 || done == total) {
-                    updateTransfer(id) { it.copy(done = done, total = total) }; lastUpdate = now
+                    updateTransfer(id) { it.copy(done = done, total = total,
+                        bytesPerSecond = speed.sample(), averageBytesPerSecond = speed.average()) }; lastUpdate = now
                 }
             }
             if (isCancelled()) throw CancellationException()
-            updateTransfer(id) { it.copy(status = "completed", done = if (it.total >= 0) it.total else it.done) }
+            updateTransfer(id) { it.copy(status = "completed", done = lastBytes,
+                total = lastBytes, bytesPerSecond = 0.0, averageBytesPerSecond = speed.average()) }
             persistTransfers()
         } catch (e: Exception) {
-            updateTransfer(id) { it.copy(status = if (isCancelled() || e is CancellationException) "cancelled" else "failed", error = if (isCancelled()) "传输已停止" else explain(e)) }
+            updateTransfer(id) { if (it.status == "cancelled") it else it.copy(
+                status = if (isCancelled() || e is CancellationException) "cancelled" else "failed", done = lastBytes,
+                bytesPerSecond = 0.0, averageBytesPerSecond = speed.average(), error = if (isCancelled()) "传输已停止" else explain(e)) }
             persistTransfers()
             context.ensureActive()
-        } finally { cancelled.remove(id) }
+        } finally { cancelled.remove(id); taskSpeeds.remove(id) }
+    }
+
+    private fun refreshSpeeds() {
+        val average = batchSpeed?.average() ?: mutable.value.averageBytesPerSecond
+        mutable.update { state -> state.copy(averageBytesPerSecond = average, transfers = state.transfers.map { transfer ->
+            val meter = taskSpeeds[transfer.id]
+            if (transfer.status == "running" && meter != null) transfer.copy(bytesPerSecond = meter.sample(), averageBytesPerSecond = meter.average())
+            else transfer
+        }) }
     }
 
     private fun updateTransfer(id: String, update: (UiTransfer) -> UiTransfer) = mutable.update { it.copy(transfers = it.transfers.map { t -> if (t.id == id) update(t) else t }) }

@@ -7,6 +7,7 @@ data class AppSettings(
     val einkMode: Boolean,
     val updateServerUrl: String,
     val deviceId: String,
+    val backgroundTransfers: Boolean = false,
 )
 
 /** Private, backup-excluded preferences for display mode and the EasyUpdate service. */
@@ -21,11 +22,16 @@ class SettingsStore(context: Context) {
             einkMode = prefs.getBoolean("eink_mode", false),
             updateServerUrl = prefs.getString("update_server_url", null)?.takeIf { it.isNotBlank() } ?: DEFAULT_UPDATE_URL,
             deviceId = deviceId,
+            backgroundTransfers = prefs.getBoolean("background_transfers", false),
         )
     }
 
     fun writeEink(enabled: Boolean) {
         check(prefs.edit().putBoolean("eink_mode", enabled).commit()) { "显示设置保存失败" }
+    }
+
+    fun writeBackgroundTransfers(enabled: Boolean) {
+        check(prefs.edit().putBoolean("background_transfers", enabled).commit()) { "后台传输设置保存失败" }
     }
 
     fun writeUpdateServerUrl(url: String) {

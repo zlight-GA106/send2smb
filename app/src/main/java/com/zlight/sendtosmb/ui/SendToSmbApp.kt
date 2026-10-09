@@ -31,9 +31,13 @@ private val destinations = listOf(
 )
 
 @Composable
-fun SendToSmbApp(state: UiState, onAction: (UiAction) -> Unit) {
+fun SendToSmbApp(state: UiState, onAction: (UiAction) -> Unit) = SendToSmbApp(state, 0, onAction)
+
+@Composable
+fun SendToSmbApp(state: UiState, openTransfers: Int, onAction: (UiAction) -> Unit) {
     FluentTheme {
         var destination by rememberSaveable { mutableIntStateOf(0) }
+        LaunchedEffect(openTransfers) { if (openTransfers > 0) destination = 2 }
         var editingProfile by remember { mutableStateOf<UiProfile?>(null) }
         var showProfileEditor by rememberSaveable { mutableStateOf(false) }
         val snackbar = remember { SnackbarHostState() }

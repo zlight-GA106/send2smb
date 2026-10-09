@@ -1,6 +1,9 @@
 package com.zlight.sendtosmb
 
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -8,9 +11,11 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
@@ -24,7 +29,9 @@ import org.json.JSONObject
 import java.io.File
 
 class MainActivity : ComponentActivity() {
-    private val model: ExplorerViewModel by viewModels()
+    private val model get() = (application as SendToSmbApplication).explorer
+    private var openTransfers by mutableStateOf(0)
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private var uploadPath = ""
     private var downloadFiles = emptyList<UiFile>()
     private var downloadProfileId: String? = null
@@ -54,6 +61,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent.getBooleanExtra("showTransfers", false)) openTransfers++
         uploadPath = savedInstanceState?.getString("uploadPath").orEmpty()
         downloadProfileId = savedInstanceState?.getString("downloadProfileId")
         savedInstanceState?.getString("downloadFiles")?.let { json ->
@@ -70,7 +78,7 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             val state by model.state.collectAsState()
-            SendToSmbApp(state) { action ->
+            SendToSmbApp(state, openTransfers) { action ->
                 when (action) {
                     UiAction.Upload -> {
                         uploadPath = state.path
@@ -92,6 +100,13 @@ class MainActivity : ComponentActivity() {
                         model.dispatch(action)
                     }
                     UiAction.OpenWifiSettings -> startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                    is UiAction.SetBackgroundTransfers -> {
+                        model.dispatch(action)
+                        if (action.enabled && Build.VERSION.SDK_INT >= 33 &&
+                            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
                     UiAction.InstallUpdate -> installVerifiedUpdate(state.update.verifiedPath)
                     else -> model.dispatch(action)
                 }
@@ -101,6 +116,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() { super.onStart(); model.onForeground() }
     override fun onStop() { if (!isChangingConfigurations) model.onBackground(); super.onStop() }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("showTransfers", false)) openTransfers++
+    }
 
     private fun installVerifiedUpdate(path: String?) {
         if (path.isNullOrBlank()) {

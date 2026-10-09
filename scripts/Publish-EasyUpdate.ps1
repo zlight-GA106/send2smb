@@ -146,5 +146,11 @@ try {
     Write-Output ''
     & $curl -sS "$Server/api/v1/apps/$Package/latest?version_code=$versionCode"
 } finally {
-    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    $cleanupPath = [System.IO.Path]::GetFullPath($work)
+    $tempRoot = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $cleanupPath.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        [System.IO.Path]::GetFileName($cleanupPath) -notmatch '^easyupdate-publish-[0-9a-f]{32}$') {
+        throw '拒绝清理临时发布目录：路径不在预期的临时目录内'
+    }
+    Remove-Item -LiteralPath $cleanupPath -Recurse -Force -ErrorAction SilentlyContinue
 }
