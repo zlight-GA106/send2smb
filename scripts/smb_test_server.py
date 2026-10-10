@@ -111,6 +111,21 @@ def install_windows_rename_workaround(server) -> None:
         return result
 
     original = server.getServer().hookSmb2Command(smb2.SMB2_SET_INFO, set_info)
+    # Impacket uses os.rename after checking ReplaceIfExists. On Windows os.rename
+    # still refuses an existing target; use atomic os.replace in this handler's private
+    # globals only. Do not monkey-patch os for other server threads or processes.
+    import types
+
+    class RenameCompatibleOS:
+        rename = staticmethod(os.replace)
+
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+    original = types.FunctionType(
+        original.__code__, {**original.__globals__, "os": RenameCompatibleOS()},
+        original.__name__, original.__defaults__, original.__closure__,
+    )
 
 
 if __name__ == "__main__":

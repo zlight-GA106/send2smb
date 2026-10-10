@@ -152,8 +152,8 @@ class SmbRepository : Closeable {
     /** Uploads through a sibling temporary file, committing only after all bytes are flushed. */
     fun upload(path: String, input: InputStream, totalBytes: Long = -1,
                cancelled: () -> Boolean = { false }, onProgress: (Long, Long) -> Unit = { _, _ -> },
-               overwrite: Boolean = false) {
-        upload(state(), path, input, totalBytes, cancelled, onProgress, overwrite)
+               overwrite: Boolean = false, beforeCommit: () -> Unit = {}) {
+        upload(state(), path, input, totalBytes, cancelled, onProgress, overwrite, beforeCommit)
     }
 
     fun download(path: String, output: OutputStream, cancelled: () -> Boolean = { false },
@@ -196,7 +196,8 @@ class SmbRepository : Closeable {
     }
 
     private fun upload(state: State, path: String, input: InputStream, totalBytes: Long,
-                       cancelled: () -> Boolean, onProgress: (Long, Long) -> Unit, overwrite: Boolean) {
+                       cancelled: () -> Boolean, onProgress: (Long, Long) -> Unit, overwrite: Boolean,
+                       beforeCommit: () -> Unit = {}) {
         requireChild(path)
         checkActive(state, cancelled)
         val disk = share(state)
@@ -226,6 +227,8 @@ class SmbRepository : Closeable {
                 checkActive(state, cancelled)
                 if (totalBytes >= 0 && done != totalBytes) throw IOException("源文件大小发生变化，请重新上传")
                 file.flush()
+                checkActive(state, cancelled)
+                beforeCommit()
                 checkActive(state, cancelled)
                 file.rename(target, overwrite)
                 committed = true

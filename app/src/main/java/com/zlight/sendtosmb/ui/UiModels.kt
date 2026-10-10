@@ -85,6 +85,9 @@ sealed interface UiAction {
     data class Navigate(val path: String) : UiAction
     data object Refresh : UiAction
     data object Upload : UiAction
+    data class EditTextFile(val file: UiFile) : UiAction
+    data class CreateTextFile(val name: String) : UiAction
+    data object OpenTextEditor : UiAction
     data class Download(val files: List<UiFile>, val profileId: String? = null) : UiAction
     data class CreateFolder(val name: String) : UiAction
     data class Rename(val file: UiFile, val newName: String) : UiAction

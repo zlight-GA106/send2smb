@@ -98,6 +98,13 @@ internal fun HomePage(
                 }
             }
         }
+        item {
+            TextButton(onClick = { onAction(UiAction.OpenTextEditor) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.EditNote, null, Modifier.size(19.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("文本编辑器")
+            }
+        }
         item { Spacer(Modifier.height(4.dp)) }
     }
 }

@@ -43,6 +43,7 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
     var sortMenu by remember { mutableStateOf(false) }
     var toolbarMenu by remember { mutableStateOf(false) }
     var newFolder by remember { mutableStateOf(false) }
+    var newText by remember { mutableStateOf(false) }
     var renameFile by remember { mutableStateOf<UiFile?>(null) }
     var detailsFile by remember { mutableStateOf<UiFile?>(null) }
     var deleteFiles by remember { mutableStateOf<List<UiFile>>(emptyList()) }
@@ -65,6 +66,7 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
     fun clickFile(file: UiFile) {
         if (selected.isNotEmpty()) toggle(file)
         else if (file.isDirectory) onAction(UiAction.Navigate(file.path))
+        else if (file.name.endsWith(".txt", true)) onAction(UiAction.EditTextFile(file))
         else detailsFile = file
     }
 
@@ -119,6 +121,8 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
                     Box {
                         ToolIcon(Icons.Outlined.MoreHoriz, "文件操作") { toolbarMenu = true }
                         DropdownMenu(toolbarMenu, { toolbarMenu = false }) {
+                            DropdownMenuItem(text = { Text("新建文本文档") }, onClick = { newText = true; toolbarMenu = false }, leadingIcon = { Icon(Icons.Outlined.NoteAdd, null) }, enabled = !state.loading)
+                            DropdownMenuItem(text = { Text("文本编辑器") }, onClick = { onAction(UiAction.OpenTextEditor); toolbarMenu = false }, leadingIcon = { Icon(Icons.Outlined.EditNote, null) })
                             DropdownMenuItem(text = { Text("全选") }, onClick = { selected = visibleFiles.map { it.path }.toSet(); toolbarMenu = false }, leadingIcon = { Icon(Icons.Outlined.SelectAll, null) }, enabled = visibleFiles.isNotEmpty())
                             DropdownMenuItem(text = { Text("粘贴${if (state.clipboardCount > 0) "（${state.clipboardCount}）" else ""}") }, onClick = { onAction(UiAction.Paste); toolbarMenu = false }, leadingIcon = { Icon(Icons.Outlined.ContentPaste, null) }, enabled = state.clipboardCount > 0)
                             DropdownMenuItem(text = { Text("断开连接") }, onClick = { onAction(UiAction.Disconnect); toolbarMenu = false }, leadingIcon = { Icon(Icons.Outlined.LinkOff, null) })
@@ -140,7 +144,7 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
                 if (visibleFiles.isEmpty()) EmptyFolder(search.isNotBlank(), state.loading)
                 else if (grid) LazyVerticalGrid(columns = GridCells.Adaptive(if (wide) 150.dp else 128.dp), contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(visibleFiles, key = { it.path }) { file ->
-                        FileGridItem(file, file.path in selected, onClick = { clickFile(file) }, onLongClick = { toggle(file) }, onDetails = { detailsFile = file }, onDownload = { onAction(UiAction.Download(listOf(file))) }, onRename = { renameFile = file }, onDelete = { deleteFiles = listOf(file) }, onClipboard = { move -> onAction(UiAction.SetClipboard(listOf(file), move)) })
+                        FileGridItem(file, file.path in selected, onClick = { clickFile(file) }, onLongClick = { toggle(file) }, onDetails = { detailsFile = file }, onDownload = { onAction(UiAction.Download(listOf(file))) }, onRename = { renameFile = file }, onDelete = { deleteFiles = listOf(file) }, onClipboard = { move -> onAction(UiAction.SetClipboard(listOf(file), move)) }, onEditText = { onAction(UiAction.EditTextFile(file)) })
                     }
                 } else Column {
                     if (wide) Row(Modifier.fillMaxWidth().background(Color(0xFFFAFBFC)).padding(start = 20.dp, end = 52.dp, top = 11.dp, bottom = 11.dp)) {
@@ -151,7 +155,7 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
                     }
                     LazyColumn {
                         items(visibleFiles, key = { it.path }) { file ->
-                            FileListItem(file, wide, file.path in selected, selected.isNotEmpty(), onClick = { clickFile(file) }, onLongClick = { toggle(file) }, onDetails = { detailsFile = file }, onDownload = { onAction(UiAction.Download(listOf(file))) }, onRename = { renameFile = file }, onDelete = { deleteFiles = listOf(file) }, onClipboard = { move -> onAction(UiAction.SetClipboard(listOf(file), move)) })
+                            FileListItem(file, wide, file.path in selected, selected.isNotEmpty(), onClick = { clickFile(file) }, onLongClick = { toggle(file) }, onDetails = { detailsFile = file }, onDownload = { onAction(UiAction.Download(listOf(file))) }, onRename = { renameFile = file }, onDelete = { deleteFiles = listOf(file) }, onClipboard = { move -> onAction(UiAction.SetClipboard(listOf(file), move)) }, onEditText = { onAction(UiAction.EditTextFile(file)) })
                         }
                     }
                 }
@@ -163,6 +167,7 @@ internal fun ExplorerPage(state: UiState, wide: Boolean, onAction: (UiAction) ->
         }
     }
     if (newFolder) NameDialog("新建文件夹", "文件夹名称", "", "新建", onDismiss = { newFolder = false }) { onAction(UiAction.CreateFolder(it)); newFolder = false }
+    if (newText) NameDialog("新建文本文档", "文件名", "新建文本文档.txt", "新建", onDismiss = { newText = false }) { onAction(UiAction.CreateTextFile(it)); newText = false }
     renameFile?.let { file -> NameDialog("重命名", "新名称", file.name, "保存", onDismiss = { renameFile = null }) { onAction(UiAction.Rename(file, it)); renameFile = null } }
     detailsFile?.let { file -> FileDetails(file, onDismiss = { detailsFile = null }, onDownload = { onAction(UiAction.Download(listOf(file))); detailsFile = null }) }
     if (deleteFiles.isNotEmpty()) AlertDialog(onDismissRequest = { deleteFiles = emptyList() }, icon = { Icon(Icons.Outlined.DeleteOutline, null, tint = Fluent.Red) }, title = { Text("删除${if (deleteFiles.size == 1) "此项目" else " ${deleteFiles.size} 个项目"}？") },

@@ -25,6 +25,22 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".editor.TextEditorActivity" android:exported="false"
+            android:label="文本编辑器" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".editor.TextOpenActivity" android:exported="true" android:label="SendToSMB 文本编辑器">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="text/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+        </activity>
         <service android:name=".BackgroundTransferService" android:exported="false"
             android:foregroundServiceType="dataSync" android:stopWithTask="false" />
         <provider

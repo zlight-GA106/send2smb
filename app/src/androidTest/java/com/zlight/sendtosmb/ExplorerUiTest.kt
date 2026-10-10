@@ -28,6 +28,21 @@ class ExplorerUiTest {
         }
     }
 
+    @Test fun txtFilesOpenEditorAndFolderCanCreateTextDocument() {
+        val actions = mutableListOf<UiAction>()
+        val file = UiFile("notes.txt", "notes.txt", false, 20)
+        compose.setContent { SendToSmbApp(UiState(connected = true, files = listOf(file)), actions::add) }
+        compose.onNodeWithText("文件管理").performClick()
+        compose.onNodeWithText("notes.txt").performClick()
+        compose.runOnIdle { assertTrue(actions.contains(UiAction.EditTextFile(file))) }
+        compose.onNodeWithContentDescription("文件操作").performClick()
+        compose.onNodeWithText("新建文本文档").performClick()
+        compose.onNodeWithText("文件名").performTextClearance()
+        compose.onNodeWithText("文件名").performTextInput("diary.txt")
+        compose.onNodeWithText("新建").performClick()
+        compose.runOnIdle { assertTrue(actions.contains(UiAction.CreateTextFile("diary.txt"))) }
+    }
+
     @Test fun settingsPageTogglesEinkAndChecksUpdates() {
         val actions = mutableListOf<UiAction>()
         compose.setContent { SendToSmbApp(UiState(update = UiUpdateState(serverUrl = "http://192.168.95.55:19910")), actions::add) }

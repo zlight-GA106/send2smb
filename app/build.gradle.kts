@@ -10,8 +10,8 @@ android {
         applicationId = "com.zlight.sendtosmb"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.3.0"
+        versionCode = 7
+        versionName = "1.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
@@ -52,4 +52,8 @@ dependencies {
     androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+tasks.withType<Test>().configureEach {
+    inputs.property("editorSmbTests", providers.environmentVariable("SENDTOSMB_EDITOR_SMB_TEST").getOrElse(""))
 }

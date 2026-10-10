@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun FileListItem(file: UiFile, wide: Boolean, selected: Boolean, selectionMode: Boolean, onClick: () -> Unit, onLongClick: () -> Unit,
-    onDetails: () -> Unit, onDownload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onClipboard: (Boolean) -> Unit) {
+    onDetails: () -> Unit, onDownload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onClipboard: (Boolean) -> Unit, onEditText: (() -> Unit)? = null) {
     Column {
         Row(Modifier.fillMaxWidth().background(if (selected) Fluent.BlueTint else Color.Transparent).combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             if (selectionMode) {
@@ -44,7 +44,7 @@ internal fun FileListItem(file: UiFile, wide: Boolean, selected: Boolean, select
                 Text(fileKind(file), Modifier.width(90.dp), style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (file.isDirectory) "—" else formatSize(file.size), Modifier.width(90.dp), style = MaterialTheme.typography.bodySmall, color = Fluent.Secondary, textAlign = TextAlign.End)
             }
-            FileMenu(file, onDetails, onDownload, onRename, onDelete, onClipboard, onSelect = onLongClick)
+            FileMenu(file, onDetails, onDownload, onRename, onDelete, onClipboard, onSelect = onLongClick, onEditText = onEditText)
         }
         HorizontalDivider(Modifier.padding(start = if (selectionMode) 95.dp else 65.dp), color = Fluent.Border.copy(alpha = .65f))
     }
@@ -52,13 +52,13 @@ internal fun FileListItem(file: UiFile, wide: Boolean, selected: Boolean, select
 
 @Composable
 internal fun FileGridItem(file: UiFile, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onDetails: () -> Unit,
-    onDownload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onClipboard: (Boolean) -> Unit) {
+    onDownload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onClipboard: (Boolean) -> Unit, onEditText: (() -> Unit)? = null) {
     Surface(shape = Fluent.Control, color = if (selected) Fluent.BlueTint else Color.White, border = BorderStroke(1.dp, if (selected) Fluent.Blue.copy(alpha = .5f) else Fluent.Border)) {
         Column(Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(start = 12.dp, end = 8.dp, bottom = 14.dp)) {
             Row(Modifier.fillMaxWidth().height(38.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (selected) Icon(Icons.Outlined.CheckCircle, "已选择", Modifier.size(18.dp), tint = Fluent.Blue)
                 Spacer(Modifier.weight(1f))
-                FileMenu(file, onDetails, onDownload, onRename, onDelete, onClipboard, onSelect = onLongClick)
+                FileMenu(file, onDetails, onDownload, onRename, onDelete, onClipboard, onSelect = onLongClick, onEditText = onEditText)
             }
             FileTypeIcon(file, 52)
             Spacer(Modifier.height(12.dp))
@@ -70,11 +70,12 @@ internal fun FileGridItem(file: UiFile, selected: Boolean, onClick: () -> Unit, 
 }
 
 @Composable
-private fun FileMenu(file: UiFile, onDetails: () -> Unit, onDownload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onClipboard: (Boolean) -> Unit, onSelect: () -> Unit) {
+private fun FileMenu(file: UiFile, onDetails: () -> Unit, onDownload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onClipboard: (Boolean) -> Unit, onSelect: () -> Unit, onEditText: (() -> Unit)?) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         ToolIcon(Icons.Outlined.MoreVert, "${file.name}的更多操作") { expanded = true }
         DropdownMenu(expanded, { expanded = false }) {
+            if (!file.isDirectory && file.name.endsWith(".txt", true) && onEditText != null) FileMenuAction("编辑文本", Icons.Outlined.EditNote) { expanded = false; onEditText() }
             FileMenuAction("下载", Icons.Outlined.Download) { expanded = false; onDownload() }
             FileMenuAction("选择", Icons.Outlined.CheckCircleOutline) { expanded = false; onSelect() }
             HorizontalDivider(color = Fluent.Border)

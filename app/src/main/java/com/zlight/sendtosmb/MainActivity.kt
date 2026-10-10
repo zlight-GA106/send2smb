@@ -80,6 +80,20 @@ class MainActivity : ComponentActivity() {
             val state by model.state.collectAsState()
             SendToSmbApp(state, openTransfers) { action ->
                 when (action) {
+                    UiAction.OpenTextEditor -> startActivity(Intent(this, com.zlight.sendtosmb.editor.TextEditorActivity::class.java))
+                    is UiAction.EditTextFile -> state.currentProfileId?.let { id ->
+                        startActivity(Intent(this, com.zlight.sendtosmb.editor.TextEditorActivity::class.java)
+                            .putExtra("profile", id).putExtra("path", action.file.path).putExtra("name", action.file.name))
+                    }
+                    is UiAction.CreateTextFile -> state.currentProfileId?.let { id ->
+                        runCatching {
+                            val name = if (action.name.endsWith(".txt", true)) action.name else "${action.name}.txt"
+                            com.zlight.sendtosmb.data.SmbAddress.validateName(name)
+                            startActivity(Intent(this, com.zlight.sendtosmb.editor.TextEditorActivity::class.java)
+                                .putExtra("profile", id).putExtra("path", com.zlight.sendtosmb.data.SmbAddress.childPath(state.path, name))
+                                .putExtra("name", name).putExtra("new", true))
+                        }.onFailure { model.reportDownloadDirectoryError(it) }
+                    }
                     UiAction.Upload -> {
                         uploadPath = state.path
                         uploadPicker.launch(arrayOf("*/*"))

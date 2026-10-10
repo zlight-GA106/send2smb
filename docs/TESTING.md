@@ -1,5 +1,25 @@
 # SendToSMB 测试说明
 
+## 已执行的验证（2026-10-10，1.4.0 / 7）
+
+- JDK 17.0.20.1 执行 `assembleRelease`、`assembleDebug`、`assembleDebugAndroidTest`、`testDebugUnitTest` 和 `lintDebug` 全部成功，Lint 无错误。
+- 36 项 JVM 测试全部通过：既有地址、更新和速度测试 13 项；文本格式 / 分页 / 恢复测试 18 项；本机隔离 SMB 编辑保存测试 5 项，无跳过。
+- 文本核心测试覆盖 UTF-8 BOM / 无 BOM、GBK、UTF-16 LE / BE，逐个 CRLF / LF / CR 及混合换行保留，缺末尾换行、空文件、不可编码字符拒绝、非法代理项拒绝、页边界不拆 CRLF / emoji、跨页查找替换、跨页行号跳转、磁盘撤销重做、草稿恢复、Unicode 统计、相同文本替换不改换行和失败的原子写入保留旧文件。
+- SMB 测试只连接 `127.0.0.1:1445/TESTSHARE` 的临时 UUID 子目录，覆盖缓存后编辑、临时文件 flush / rename 替换并保留 BOM / CRLF、远程内容冲突拒绝覆盖、无变化保存保留修改时间、同名另存为拒绝和提交前异常保留原文件 / 清理临时文件。未访问或写入用户真实 SMB 文件。Impacket Windows 夹具增加仅用于 SMB2 SetInfo handler 的 `os.replace` 兼容修正，保留 ReplaceIfExists 的原有冲突检查。
+- 新增原生 EditText 的标题修改标记、撤销重做、触摸光标、查找及只读界面测试；文件管理界面测试增加打开 TXT / 新建文本文档动作。AndroidTest APK 已编译；按本次无测试机的条件，未运行设备仪器测试、系统文件选择器或键盘 / 横竖屏真机验收。
+- `aapt2` 确认版本 `1.4.0 / 7`、包名 `com.zlight.sendtosmb`、目标 API 36，Release 无 DEBUGGABLE 标记。`apksigner verify --print-certs` 通过，证书 SHA-256 为 `383337cdc9552808990eb825a28c6c768bc4c479663fd04b71e67f409e2329ef`，与此前发布包一致。
+- EasyUpdate 已发布 `1.4.0 (7)`（应用 ID 6，后台 release ID 13）。公开 API 对 `version_code=6` 返回更新，对 `version_code=7` 返回已是最新。下载包、本地 Release APK 与 API SHA-256 一致：`7d322f0f64a6d0f2b02f516660a031d300f332d1ba56f5048b53bf63ede4a497`，16,109,219 字节。
+
+复现主机 SMB 测试：先在一个终端按下文运行 `scripts/smb_test_server.py`（仅监听本机），在另一个终端执行：
+
+```powershell
+$env:SENDTOSMB_EDITOR_SMB_TEST = '1'
+.\scripts\build.ps1 -JavaHome '你的 JDK 17 目录' -Tasks 'testDebugUnitTest'
+Remove-Item Env:SENDTOSMB_EDITOR_SMB_TEST
+```
+
+不设置该变量时，5 项主机 SMB 集成测试跳过；其目标固定为隔离服务，不接受真实共享地址。设备可用后可执行 `com.zlight.sendtosmb.TextEditorUiTest`，并手工验证从文件管理器 / 分享打开、SAF 另存为、软键盘 / 横屏和进程重建后的草稿恢复。
+
 ## 已执行的验证（2026-10-09，1.3.0 / 6）
 
 - 使用 JDK 17.0.20.1 执行 `assembleRelease`、`assembleDebug`、`assembleDebugAndroidTest`、`testDebugUnitTest` 和 `lintDebug`，全部成功；Lint 无错误。当前 Android Studio 捆绑 JBR 25 与工程现有 Kotlin / Gradle 版本不兼容，改为显式传入 JDK 17 构建，未调整依赖版本。
