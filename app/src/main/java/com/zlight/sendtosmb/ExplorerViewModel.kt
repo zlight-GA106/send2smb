@@ -3,9 +3,7 @@ package com.zlight.sendtosmb
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
-import android.provider.OpenableColumns
 import android.util.Log
-import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hierynomus.mssmb2.SMBApiException
@@ -20,6 +18,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.IOException
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -45,8 +44,11 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
     private var speedTicker: Job? = null
     private var backgroundServiceRequested = false
     private var backgroundServiceFailed = false
-    private data class UploadGrant(var users: Int, val owned: Boolean)
-    private val uploadGrants = mutableMapOf<Uri, UploadGrant>()
+    private val ownedUploadGrants = ConcurrentHashMap.newKeySet<String>()
+    private val scheduledTransfers = ConcurrentHashMap<String, String>()
+    private val transferPersistence = Any()
+    private val resumeDocuments by lazy { AndroidResumeDocuments(getApplication()) }
+    private val resumeWorkspace by lazy { File(getApplication<Application>().filesDir, "transfer-resume") }
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private var clipboard = emptyList<UiFile>()
     private var clipboardMove = false
@@ -66,6 +68,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }.onFailure { mutable.update { it.copy(message = "保存的凭据无法解密，请重新添加连接") } }
         runCatching { transferStore.read() }.onSuccess { history ->
             mutable.update { it.copy(transfers = history) }
+            ownedUploadGrants.addAll(history.mapNotNull { it.resume?.takeIf { r -> r.uploadGrantOwned }?.sourceUri })
         }.onFailure { mutable.update { it.copy(message = "传输记录无法读取，新的记录仍会正常保存") } }
         runCatching { transferStore.readDownloadDirectory() }.onSuccess { directory ->
             mutable.update { it.copy(downloadDirectoryUri = directory?.uri, downloadDirectoryName = directory?.name) }
@@ -130,6 +133,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         jobs.toList().forEach { it.cancel() }
         jobs.clear()
         transferJobs.clear()
+        scheduledTransfers.clear()
         speedTicker?.cancel()
         speedTicker = null
         taskSpeeds.clear()
@@ -139,10 +143,12 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         val old = repository
         repository = null
         if (old != null) CoroutineScope(Dispatchers.IO).launch { runCatching { old.disconnect() } }
-        val hadActiveTransfers = mutable.value.transfers.any { it.status == "running" || it.status == "queued" }
+        val hadActiveTransfers = mutable.value.transfers.any { it.status in setOf("running", "queued", "discarding") }
         mutable.update { current -> current.copy(connected = false, connecting = false, loading = false, transferBusy = false,
             message = message ?: current.message,
-            transfers = current.transfers.map { if (it.status in setOf("running", "queued")) it.copy(status = "cancelled", bytesPerSecond = 0.0, error = "连接关闭，传输已停止") else it }) }
+            transfers = current.transfers.map { if (it.status in setOf("running", "queued", "discarding")) it.copy(
+                status = if (it.resume != null) "paused" else "cancelled", bytesPerSecond = 0.0,
+                error = if (it.resume != null) "连接关闭，断点已保留，可继续传输" else "连接关闭，传输已停止") else it }) }
         if (hadActiveTransfers) persistTransfers()
     }
 
@@ -262,8 +268,12 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                     val p = action.profile.copy(url = SmbAddress.parse(action.profile.url).canonicalUrl,
                         name = action.profile.name.trim().ifBlank { "SMB 共享" }, username = action.profile.username.trim(), domain = action.profile.domain.trim())
                     val old = mutable.value
+                    val previous = old.profiles.firstOrNull { it.id == p.id }
+                    val connectionChanged = previous != null && old.currentProfileId == p.id &&
+                        (previous.url != p.url || previous.username != p.username || previous.domain != p.domain || previous.password != p.password)
                     val profiles = old.profiles.filterNot { it.id == p.id } + p
                     store.write(profiles, if (action.connectNow) p.id else old.currentProfileId)
+                    if (connectionChanged) closeSession("连接信息已更新，未完成任务的断点已保留")
                     mutable.update { it.copy(profiles = profiles, message = "连接已保存") }
                     if (action.connectNow) dispatch(UiAction.Connect(p.id))
                 }.onFailure { mutable.update { s -> s.copy(message = explain(it)) } }
@@ -309,9 +319,15 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                     clipboard = emptyList(); mutable.update { it.copy(clipboardCount = 0, message = "已粘贴 ${items.size} 个项目") }; reload()
                 }
             }
-            is UiAction.CancelTransfer -> cancelled.add(action.id)
+            is UiAction.CancelTransfer -> {
+                cancelled.add(action.id)
+                updateTransfer(action.id) { if (it.status == "queued" && it.resume != null) it.copy(status = "paused", error = "已暂停，断点已保留") else it }
+                persistTransfers()
+            }
+            is UiAction.ResumeTransfer -> resumeTransfer(action.id)
+            is UiAction.DiscardTransfer -> discardTransfer(action.id)
             UiAction.ClearCompletedTransfers -> {
-                mutable.update { it.copy(transfers = it.transfers.filter { t -> t.status in setOf("running", "queued") }) }
+                mutable.update { it.copy(transfers = it.transfers.filter { t -> t.resume != null || t.status in setOf("running", "queued") }) }
                 persistTransfers()
             }
             UiAction.ClearDownloadDirectory -> {
@@ -398,103 +414,162 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
 
     fun upload(uris: List<Uri>, destination: String) {
         if (uris.isEmpty()) return
+        val profile = mutable.value.profiles.firstOrNull { it.id == mutable.value.currentProfileId } ?: return
         val resolver = getApplication<Application>().contentResolver
-        // Retain each selected document until its batch finishes, including Activity destruction.
-        val retained = uris.distinct()
-        retained.forEach { uri ->
-            val grant = uploadGrants[uri]
-            if (grant != null) grant.users++
-            else {
-                val owned = resolver.persistedUriPermissions.none { it.uri == uri && it.isReadPermission } &&
-                    runCatching { resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }.isSuccess
-                uploadGrants[uri] = UploadGrant(1, owned)
-            }
+        uris.distinct().forEach { uri ->
+            if (resolver.persistedUriPermissions.none { it.uri == uri && it.isReadPermission } &&
+                runCatching { resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }.isSuccess)
+                ownedUploadGrants.add(uri.toString())
         }
-        val job = work(transferWork = true) {
-            val metadata = withContext(Dispatchers.IO) {
-                uris.map { uri ->
-                    var name = "上传文件"; var size = -1L
-                    resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val n = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (n >= 0) name = cursor.getString(n) ?: name
-                            val s = cursor.getColumnIndex(OpenableColumns.SIZE); if (s >= 0 && !cursor.isNull(s)) size = cursor.getLong(s)
-                        }
-                    }
-                    Triple(uri, name, size)
-                }
-            }
-            val items = metadata.map { (uri, name, size) -> Triple(uri, name, newTransfer(name, "upload", size, profileId = mutable.value.currentProfileId)) }
-            val smb = connectionForTransfers(items.map { it.third })
-            for ((uri, name, id) in items) transfer(id) { isCancelled, progress ->
-                withContext(Dispatchers.IO) {
-                    val existing = smb.list(destination).map { it.name.lowercase() }.toSet()
-                    val targetName = uniqueName(validName(name), existing)
-                    resolver.openInputStream(uri)?.use { input ->
-                        smb.upload(join(destination, targetName), input, mutable.value.transfers.first { it.id == id }.total, isCancelled, progress)
-                    } ?: throw IOException("无法读取所选文件")
-                }
-            }
-            reload()
-            reportTransfers(items.map { it.third }, "上传")
+        // Record the selection before waiting behind any earlier transfer batch.
+        val items = uris.distinct().mapIndexed { index, uri ->
+            newTransfer("准备上传 ${index + 1}", "upload", -1, profileId = profile.id,
+                resume = TransferResume(SmbAddress.parse(profile.url).canonicalUrl, profile.username, profile.domain,
+                    destination, "", sourceUri = uri.toString(), uploadGrantOwned = uri.toString() in ownedUploadGrants))
         }
-        job.invokeOnCompletion {
-            viewModelScope.launch {
-                retained.forEach { uri ->
-                    val grant = uploadGrants[uri] ?: return@forEach
-                    if (--grant.users == 0) {
-                        uploadGrants.remove(uri)
-                        if (grant.owned) runCatching { resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                    }
-                }
-            }
-        }
+        enqueueResumable(items, refresh = true, direction = "上传")
     }
 
     fun download(files: List<UiFile>, treeUri: Uri, requestedProfileId: String? = null) {
         if (files.isEmpty()) return
-        if (requestedProfileId != null && mutable.value.profiles.none { it.id == requestedProfileId }) {
-            mutable.update { it.copy(message = "原连接已被删除，无法再次下载") }
-            return
-        }
-        if (requestedProfileId != null && requestedProfileId != mutable.value.currentProfileId) {
-            closeSession()
-            autoConnect = true
-            clipboard = emptyList()
-            mutable.update { it.copy(currentProfileId = requestedProfileId, path = "", files = emptyList(), capacity = null, clipboardCount = 0) }
-            runCatching { persist() }.onFailure { mutable.update { state -> state.copy(message = explain(it)) } }
-        }
         val profileId = requestedProfileId ?: mutable.value.currentProfileId
-        val items = files.map { file -> file to newTransfer(file.name, "download", if (file.isDirectory) -1 else file.size, file, profileId) }
-        work(transferWork = true) {
-            val smb = connectionForTransfers(items.map { it.second })
-            for ((file, id) in items) transfer(id) { isCancelled, progress ->
-                withContext(Dispatchers.IO) {
-                    val root = DocumentFile.fromTreeUri(getApplication(), treeUri) ?: error("无法打开保存位置")
-                    var done = 0L
-                    suspend fun save(entry: UiFile, parent: DocumentFile, depth: Int) {
-                        check(depth < 128) { "文件夹层级过深" }
-                        if (isCancelled()) throw CancellationException("已取消")
-                        val name = uniqueName(validName(entry.name), parent.listFiles().mapNotNull { it.name?.lowercase() }.toSet())
-                        if (entry.isDirectory) {
-                            val folder = parent.createDirectory(name) ?: error("无法创建本地文件夹")
-                            smb.list(entry.path).forEach { f -> save(UiFile(f.name, f.path, f.isDirectory, f.size, f.lastModified), folder, depth + 1) }
-                        } else {
-                            val target = parent.createFile("application/octet-stream", name) ?: error("无法创建本地文件")
-                            try {
-                                val start = done
-                                getApplication<Application>().contentResolver.openOutputStream(target.uri, "w")?.use { output ->
-                                    smb.download(entry.path, output, isCancelled,
-                                        { bytes, _ -> progress(start + bytes, if (file.isDirectory) -1 else file.size) },
-                                        expectedBytes = entry.size)
-                                } ?: error("无法写入保存位置")
-                                done += entry.size
-                            } catch (e: Exception) { runCatching { target.delete() }; throw e }
-                        }
+        val profile = mutable.value.profiles.firstOrNull { it.id == profileId }
+        if (profile == null) { mutable.update { it.copy(message = "原连接已被删除，无法下载") }; return }
+        if (!selectTransferProfile(profile.id)) return
+        val items = files.map { file -> newTransfer(file.name, "download", if (file.isDirectory) -1 else file.size, file, profile.id,
+            TransferResume(SmbAddress.parse(profile.url).canonicalUrl, profile.username, profile.domain,
+                file.path, "", treeUri = treeUri.toString(), size = if (file.isDirectory) -1 else file.size, modified = file.modifiedMillis)) }
+        enqueueResumable(items, direction = "下载")
+    }
+
+    private fun enqueueResumable(ids: List<String>, refresh: Boolean = false, direction: String? = null) {
+        val owner = UUID.randomUUID().toString()
+        ids.forEach { scheduledTransfers[it] = owner }
+        // This runs immediately, outside the serialized SMB gate, even for a waiting batch.
+        val recorded = viewModelScope.async(Dispatchers.IO) {
+            persistTransfers(strict = true)
+            // Resolve display metadata without holding the SMB gate or delaying the first journal.
+            ids.forEach { id ->
+                val item = mutable.value.transfers.firstOrNull { it.id == id }
+                item?.resume?.takeIf { it.targetName.isEmpty() }?.sourceUri?.let { uri ->
+                    runCatching { resumeDocuments.stat(uri) }.getOrNull()?.let { info ->
+                        updateTransfer(id) { it.copy(name = info.name, total = info.size) }
                     }
-                    save(file, root, 0)
                 }
             }
-            reportTransfers(items.map { it.second }, "下载")
+            persistTransfers(strict = true)
+        }
+        val job = work(transferWork = true) {
+            recorded.await()
+            runResumableBatch(ids, owner)
+            if (refresh && mutable.value.connected) runCatching { reload() }
+            if (direction != null) reportTransfers(ids, direction)
+        }
+        job.invokeOnCompletion { viewModelScope.launch {
+            ids.filter { scheduledTransfers.remove(it, owner) }.forEach { id ->
+                updateTransfer(id) { if (it.status == "queued") it.copy(status = "paused", error = "任务已中断，断点记录已保留") else it }
+            }
+            persistTransfers()
+            releaseUnusedUploadGrants()
+        } }
+    }
+
+    private fun selectTransferProfile(profileId: String): Boolean {
+        if (mutable.value.currentProfileId == profileId) return true
+        if (mutable.value.transferBusy) { mutable.update { it.copy(message = "请先暂停当前传输，再继续其他连接的任务") }; return false }
+        closeSession()
+        autoConnect = true
+        clipboard = emptyList()
+        mutable.update { it.copy(currentProfileId = profileId, path = "", files = emptyList(), capacity = null, clipboardCount = 0) }
+        runCatching { persist() }
+        return true
+    }
+
+    private fun resumeTransfer(id: String) {
+        val item = mutable.value.transfers.firstOrNull { it.id == id && it.resume != null && it.status !in setOf("queued", "running", "discarding") } ?: return
+        val profile = matchingResumeProfile(item)
+        if (profile == null) {
+            mutable.update { it.copy(message = "请添加原服务器、原账号的连接后继续，或恢复原连接后清理断点") }; return
+        }
+        if (!selectTransferProfile(profile.id)) return
+        cancelled.remove(id)
+        updateTransfer(id) { it.copy(status = "queued", profileId = profile.id, error = null) }
+        if (scheduledTransfers.containsKey(id)) { persistTransfers(); return }
+        enqueueResumable(listOf(id))
+    }
+
+    private suspend fun runResumableBatch(ids: List<String>, owner: String) {
+        try {
+            for (id in ids) {
+                if (scheduledTransfers[id] != owner) continue
+                val queued = mutable.value.transfers.firstOrNull { it.id == id }
+                if (queued?.resume == null || queued.status != "queued") {
+                    cancelled.remove(id); scheduledTransfers.remove(id, owner); continue
+                }
+                transfer(id, owner) { isCancelled, progress ->
+                    val item = mutable.value.transfers.first { it.id == id }
+                    val saved = item.resume ?: error("续传记录不存在")
+                    val profile = mutable.value.profiles.firstOrNull { it.id == item.profileId } ?: error("原 SMB 连接已删除")
+                    require(SmbAddress.parse(profile.url).canonicalUrl == saved.serverUrl && profile.username == saved.username && profile.domain == saved.domain) {
+                        "服务器或账号已改变，断点已保留；请恢复原连接"
+                    }
+                    val smb = ensureConnection()
+                    withContext(Dispatchers.IO) { resumeEngine(id).run(item.direction, item.sourceFile, smb, isCancelled, progress) }
+                }
+            }
+        } finally { ids.forEach { scheduledTransfers.remove(it, owner) } }
+    }
+
+    private fun resumeEngine(id: String, fixed: TransferResume? = null) = ResumeTransferEngine(id, resumeWorkspace, resumeDocuments,
+        current = { fixed ?: mutable.value.transfers.first { it.id == id }.resume ?: error("续传记录不存在") },
+        checkpoint = { record ->
+            synchronized(transferPersistence) {
+                updateTransfer(id) { it.copy(resume = record, name = record.targetName.ifBlank { it.name }, total = if (record.size >= 0 && it.direction == "upload") record.size else it.total) }
+                persistTransfers(strict = true)
+            }
+        }, phase = { message -> updateTransfer(id) { it.copy(error = message) } })
+
+    private fun discardTransfer(id: String) {
+        val item = mutable.value.transfers.firstOrNull { it.id == id && it.resume != null && it.status !in setOf("running", "queued", "discarding") } ?: return
+        val record = item.resume!!
+        if (item.direction == "upload" && record.targetName.isNotEmpty()) {
+            val profile = matchingResumeProfile(item)
+            if (profile == null) {
+                mutable.update { it.copy(message = "需恢复原连接才能安全清理服务器断点；现有数据已保留") }; return
+            }
+            if (!selectTransferProfile(profile.id)) return
+            updateTransfer(id) { it.copy(profileId = profile.id) }
+        }
+        scheduledTransfers.remove(id)
+        updateTransfer(id) { it.copy(status = "discarding", error = "正在清理此任务的断点…") }
+        work {
+            try {
+                withContext(Dispatchers.IO) { persistTransfers(strict = true) }
+                val smb = if (item.direction == "upload" && record.targetName.isNotEmpty()) ensureConnection() else null
+                withContext(Dispatchers.IO) { resumeEngine(id, record).discard(smb) }
+                updateTransfer(id) { it.copy(status = "cancelled", resume = null, error = "已放弃续传，已完成的文件保留") }
+                withContext(Dispatchers.IO) { persistTransfers(strict = true) }
+                releaseUnusedUploadGrants()
+            } catch (error: Exception) {
+                updateTransfer(id) { it.copy(status = "paused", resume = record, error = "断点清理未完成：${explain(error)}") }
+                persistTransfers()
+                throw error
+            }
+        }
+    }
+
+    private fun matchingResumeProfile(item: UiTransfer): UiProfile? {
+        val record = item.resume ?: return null
+        return mutable.value.profiles.sortedBy { if (it.id == item.profileId) 0 else 1 }.firstOrNull {
+            SmbAddress.parse(it.url).canonicalUrl == record.serverUrl && it.username == record.username && it.domain == record.domain
+        }
+    }
+
+    private fun releaseUnusedUploadGrants() {
+        val inUse = mutable.value.transfers.mapNotNull { it.resume?.sourceUri }.toSet()
+        ownedUploadGrants.filterNot { it in inUse }.toList().forEach { uri ->
+            runCatching { getApplication<Application>().contentResolver.releasePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            ownedUploadGrants.remove(uri)
         }
     }
 
@@ -518,36 +593,28 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         mutable.update { it.copy(message = "$direction 完成 $completed/${items.size} 个项目${if (completed < items.size) "，请在传输页查看详情" else ""}") }
     }
 
-    private fun newTransfer(name: String, direction: String, total: Long, sourceFile: UiFile? = null, profileId: String? = null): String {
+    private fun newTransfer(name: String, direction: String, total: Long, sourceFile: UiFile? = null, profileId: String? = null,
+                            resume: TransferResume? = null): String {
         val id = UUID.randomUUID().toString()
-        mutable.update { it.copy(transfers = it.transfers + UiTransfer(id, name, direction, total = total, sourceFile = sourceFile, profileId = profileId)) }
+        mutable.update { it.copy(transfers = it.transfers + UiTransfer(id, name, direction, total = total, sourceFile = sourceFile, profileId = profileId, resume = resume)) }
         return id
     }
 
-    private suspend fun connectionForTransfers(ids: List<String>): SmbRepository = try {
-        ensureConnection()
-    } catch (e: Exception) {
-        if (e !is CancellationException) {
-            ids.forEach { id -> updateTransfer(id) { it.copy(status = "failed", error = explain(e)) } }
-            persistTransfers()
-        }
-        throw e
-    }
-
-    private suspend fun transfer(id: String, block: suspend (() -> Boolean, (Long, Long) -> Unit) -> Unit) {
+    private suspend fun transfer(id: String, owner: String, block: suspend (() -> Boolean, (Long, Long) -> Unit) -> Unit) {
         val context = currentCoroutineContext()
         val isCancelled = { !context.isActive || cancelled.contains(id) }
         var lastUpdate = 0L
-        var lastBytes = 0L
+        var lastPersist = System.nanoTime()
+        var lastBytes = mutable.value.transfers.first { it.id == id }.done
         val speed = TransferSpeedMeter()
         val batch = batchSpeed
         taskSpeeds[id] = speed
         try {
             if (isCancelled()) throw CancellationException()
-            updateTransfer(id) { it.copy(status = "running") }
+            updateTransfer(id) { it.copy(status = "running", error = null) }
+            withContext(Dispatchers.IO) { persistTransfers(strict = true) }
             block(isCancelled) { done, total ->
-                val delta = (done - lastBytes).coerceAtLeast(0)
-                speed.add(delta)
+                val delta = speed.recordProgress(done)
                 batch?.add(delta)
                 lastBytes = done
                 val now = System.nanoTime()
@@ -555,18 +622,23 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                     updateTransfer(id) { it.copy(done = done, total = total,
                         bytesPerSecond = speed.sample(), averageBytesPerSecond = speed.average()) }; lastUpdate = now
                 }
+                if (now - lastPersist >= 2_000_000_000L) { persistTransfers(strict = true); lastPersist = now }
             }
-            if (isCancelled()) throw CancellationException()
+            val savedResume = mutable.value.transfers.first { it.id == id }.resume
+            if (savedResume != null) withContext(Dispatchers.IO) { resumeEngine(id, savedResume).cleanupLocal() }
             updateTransfer(id) { it.copy(status = "completed", done = lastBytes,
-                total = lastBytes, bytesPerSecond = 0.0, averageBytesPerSecond = speed.average()) }
-            persistTransfers()
+                total = lastBytes, bytesPerSecond = 0.0, averageBytesPerSecond = speed.average(), error = null, resume = null) }
+            try { withContext(Dispatchers.IO) { persistTransfers(strict = true) } }
+            catch (error: Exception) { updateTransfer(id) { it.copy(resume = savedResume) }; throw error }
+            releaseUnusedUploadGrants()
         } catch (e: Exception) {
             updateTransfer(id) { if (it.status == "cancelled") it else it.copy(
-                status = if (isCancelled() || e is CancellationException) "cancelled" else "failed", done = lastBytes,
-                bytesPerSecond = 0.0, averageBytesPerSecond = speed.average(), error = if (isCancelled()) "传输已停止" else explain(e)) }
+                status = if (isCancelled() || e is CancellationException) (if (it.resume != null) "paused" else "cancelled") else "failed", done = lastBytes,
+                bytesPerSecond = 0.0, averageBytesPerSecond = speed.average(), error = if (isCancelled()) "传输已暂停，断点已保留" else explain(e)) }
             persistTransfers()
             context.ensureActive()
-        } finally { cancelled.remove(id); taskSpeeds.remove(id) }
+            if (e is IOException || shouldRetryRead(e)) resetConnectionForRetry()
+        } finally { cancelled.remove(id); taskSpeeds.remove(id); scheduledTransfers.remove(id, owner) }
     }
 
     private fun refreshSpeeds() {
@@ -580,9 +652,14 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
 
     private fun updateTransfer(id: String, update: (UiTransfer) -> UiTransfer) = mutable.update { it.copy(transfers = it.transfers.map { t -> if (t.id == id) update(t) else t }) }
 
-    private fun persistTransfers() {
-        runCatching { transferStore.write(mutable.value.transfers) }
-            .onFailure { mutable.update { state -> state.copy(message = "传输记录保存失败") } }
+    private fun persistTransfers(strict: Boolean = false) {
+        synchronized(transferPersistence) {
+            try { transferStore.write(mutable.value.transfers) }
+            catch (error: Exception) {
+                mutable.update { state -> state.copy(message = "传输记录保存失败，已停止新的传输写入") }
+                if (strict) throw IOException("续传记录无法保存，未开始新的写入", error)
+            }
+        }
     }
 
     private fun shouldRetryRead(error: Throwable): Boolean =

@@ -1,5 +1,7 @@
 package com.zlight.sendtosmb.ui
 
+import com.zlight.sendtosmb.TransferResume
+
 data class UiProfile(
     val id: String,
     val name: String,
@@ -53,6 +55,7 @@ data class UiTransfer(
     val profileId: String? = null,
     val bytesPerSecond: Double = 0.0,
     val averageBytesPerSecond: Double = 0.0,
+    val resume: TransferResume? = null,
 )
 
 data class UiState(
@@ -95,6 +98,8 @@ sealed interface UiAction {
     data class SetClipboard(val files: List<UiFile>, val move: Boolean) : UiAction
     data object Paste : UiAction
     data class CancelTransfer(val id: String) : UiAction
+    data class ResumeTransfer(val id: String) : UiAction
+    data class DiscardTransfer(val id: String) : UiAction
     data object ClearCompletedTransfers : UiAction
     data object SelectDownloadDirectory : UiAction
     data object ClearDownloadDirectory : UiAction

@@ -59,11 +59,43 @@ def serve(root: Path, port: int) -> None:
     server.addShare(SHARE, str(root.resolve()), "SendToSMB isolated test fixture", readOnly="no")
     server.setSMB2Support(True)
     server.addCredential(USERNAME, 0, compute_lmhash(PASSWORD), compute_nthash(PASSWORD))
+    install_disconnected_handle_cleanup(server)
     install_full_size_information_workaround(server)
+    install_resume_metadata_acl_fixture(server)
     if os.name == "nt":
         install_windows_rename_workaround(server)
     print(f"READY smb://127.0.0.1:{port}/{SHARE}", flush=True)
     server.start()
+
+
+def install_disconnected_handle_cleanup(server) -> None:
+    """Impacket drops connection records without closing descriptors on abrupt TCP EOF."""
+    from impacket import smbserver
+
+    backend = server.getServer()
+    original = backend.removeConnection
+
+    def remove_connection(name):
+        # This connection's request handler is already finishing. Explicit SMB_CLOSE removed
+        # normal handles; these remaining handles belong only to its disconnected client.
+        connection = backend.getActiveConnections().get(name, {})
+        for opened in connection.get("OpenedFiles", {}).values():
+            descriptor = opened.get("FileHandle", smbserver.VOID_FILE_DESCRIPTOR)
+            if descriptor == smbserver.PIPE_FILE_DESCRIPTOR:
+                try:
+                    opened["Socket"].close()
+                except (KeyError, OSError):
+                    pass
+            elif descriptor != smbserver.VOID_FILE_DESCRIPTOR:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            opened["FileHandle"] = smbserver.VOID_FILE_DESCRIPTOR
+        original(name)
+
+    # Instance-local fixture correction; neither the dependency nor production clients change.
+    backend.removeConnection = remove_connection
 
 
 def install_full_size_information_workaround(server) -> None:
@@ -80,6 +112,44 @@ def install_full_size_information_workaround(server) -> None:
         return result
 
     original = server.getServer().hookSmb2Command(smb2.SMB2_QUERY_INFO, query_info)
+
+
+def install_resume_metadata_acl_fixture(server) -> None:
+    """Opt-in directory markers emulate NASs with content access but restricted metadata."""
+    from impacket import smb3structs as smb2, smbserver
+    from impacket.nt_errors import STATUS_ACCESS_DENIED, STATUS_NOT_SUPPORTED
+
+    def protected(path):
+        return path.name.startswith("compat-") or path.name.startswith(".sendtosmb-resume-")
+
+    def create(connection_id, smb_server, packet):
+        request = smb2.SMB2Create(packet["Data"])
+        connection = smb_server.getConnectionData(connection_id)
+        share = connection["ConnectedShares"].get(packet["TreeID"], {})
+        name = smbserver.normalize_path(request["Buffer"][:request["NameLength"]].decode("utf-16le"))
+        path = Path(share.get("path", "")) / name
+        if protected(path) and (path.parent / ".resume-deny-attributes").is_file() and request["DesiredAccess"] & smb2.FILE_READ_ATTRIBUTES:
+            return [smb2.SMB2Error()], None, STATUS_ACCESS_DENIED
+        return original_create(connection_id, smb_server, packet)
+
+    def query_info(connection_id, smb_server, packet):
+        request = smb2.SMB2QueryInfo(packet["Data"])
+        if request["InfoType"] == smb2.SMB2_0_INFO_FILE and request["FileInfoClass"] == smb2.SMB2_FILE_ALL_INFO:
+            connection = smb_server.getConnectionData(connection_id)
+            file_id = request["FileID"].getData()
+            opened = connection["OpenedFiles"].get(file_id)
+            if opened:
+                path = Path(opened["FileName"])
+                if protected(path):
+                    if (path.parent / ".resume-deny-attributes").is_file() or (path.parent / ".resume-deny-all-info").is_file():
+                        return [smb2.SMB2Error()], None, STATUS_ACCESS_DENIED
+                    if (path.parent / ".resume-unsupported-all-info").is_file():
+                        return [smb2.SMB2Error()], None, STATUS_NOT_SUPPORTED
+        return original_query_info(connection_id, smb_server, packet)
+
+    backend = server.getServer()
+    original_create = backend.hookSmb2Command(smb2.SMB2_CREATE, create)
+    original_query_info = backend.hookSmb2Command(smb2.SMB2_QUERY_INFO, query_info)
 
 
 def install_windows_rename_workaround(server) -> None:

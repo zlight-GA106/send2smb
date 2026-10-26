@@ -41,12 +41,13 @@ class BackgroundTransferTest {
             MessageDigest.getInstance("SHA-256").digest(output.toByteArray()))
     }
 
-    @Test fun disabledBackgroundCancelsAnActiveUpload() = withUpload(false) { scenario, model, source, _, _ ->
+    @Test fun disabledBackgroundPausesAnActiveUpload() = withUpload(false) { scenario, model, source, _, _ ->
         await { model.state.value.transfers.any { it.name == source.name && it.status == "running" && it.done > 0 } }
         scenario.moveToState(Lifecycle.State.CREATED)
         assertFalse(model.state.value.transferBusy)
         assertFalse(model.state.value.connected)
-        assertEquals("cancelled", model.state.value.transfers.single { it.name == source.name }.status)
+        assertEquals("paused", model.state.value.transfers.single { it.name == source.name }.status)
+        assertNotNull(model.state.value.transfers.single { it.name == source.name }.resume)
     }
 
     @Test fun notificationCancelStopsTheQueue() = withUpload(true) { _, model, source, _, _ ->
@@ -55,7 +56,8 @@ class BackgroundTransferTest {
             app.startService(Intent(app, BackgroundTransferService::class.java).setAction("com.zlight.sendtosmb.CANCEL_TRANSFERS"))
         }
         await { !model.state.value.transferBusy }
-        assertEquals("cancelled", model.state.value.transfers.single { it.name == source.name }.status)
+        assertEquals("paused", model.state.value.transfers.single { it.name == source.name }.status)
+        assertNotNull(model.state.value.transfers.single { it.name == source.name }.resume)
         assertFalse(model.state.value.connected)
     }
 

@@ -12,8 +12,12 @@ if ($serverProcess) {
     }
     Stop-Process -Id $serverProcess.Id
 }
-$adbArgs = @()
-if ($state.serial) { $adbArgs += @('-s', $state.serial) }
-& $Adb @adbArgs reverse --remove "tcp:$($state.port)"
+if (-not $state.hostOnly -and $state.reverseConfigured -ne $false) {
+    if (-not (Test-Path -LiteralPath $Adb)) { throw "adb not found: $Adb. The test process was stopped, but forwarding still needs removal." }
+    $adbArgs = @()
+    if ($state.serial) { $adbArgs += @('-s', $state.serial) }
+    & $Adb @adbArgs reverse --remove "tcp:$($state.port)"
+    if ($LASTEXITCODE -ne 0) { throw 'Could not remove adb reverse forwarding; the process has been stopped.' }
+}
 Remove-Item -LiteralPath $statePath
 Write-Output 'Test SMB server stopped. Test fixture files were retained in .testenv/share.'

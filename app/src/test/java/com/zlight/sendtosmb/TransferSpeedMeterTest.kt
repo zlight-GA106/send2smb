@@ -34,4 +34,16 @@ class TransferSpeedMeterTest {
         assertEquals(10000.0, meter.average(), 0.001)
         assertEquals(0.0, meter.sample(), 0.001)
     }
+
+    @Test fun resumedPrefixDoesNotCountAsNewTransferSpeed() {
+        var now = 0L
+        val meter = TransferSpeedMeter { now }
+        val offset = 100L * 1024 * 1024
+        assertEquals(0L, meter.recordProgress(offset))
+        assertEquals(1024L, meter.recordProgress(offset + 1024))
+        assertEquals(0L, meter.recordProgress(offset)) // directory verification may report a lower offset
+        assertEquals(1024L, meter.recordProgress(offset + 2048))
+        now = 1_000_000_000L
+        assertEquals(2048.0, meter.average(), 0.001)
+    }
 }

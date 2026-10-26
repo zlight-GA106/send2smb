@@ -62,15 +62,15 @@ class BackgroundTransferService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == CANCEL) {
-            model.stopTransfers("已取消全部传输")
+            model.stopTransfers("已暂停全部传输，断点已保留")
             stopSelf()
         }
-        // A killed process cannot recover transient SAF grants or safely resume partial SMB writes.
+        // Resume only after the user returns: do not start background work automatically after death.
         return START_NOT_STICKY
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        model.stopTransfers("系统后台传输时限已到，请回到应用重新发起未完成的任务")
+        model.stopTransfers("系统后台传输时限已到，断点已保留，请回到传输页继续")
         stopSelf()
     }
 
@@ -106,7 +106,7 @@ class BackgroundTransferService : Service() {
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setProgress(100, if (running != null && running.total > 0) (running.done.toDouble() / running.total * 100).toInt().coerceIn(0, 100) else 0,
                 running == null || running.total <= 0)
-            .addAction(0, "取消全部", cancel)
+            .addAction(0, "暂停全部", cancel)
             .build()
     }
 

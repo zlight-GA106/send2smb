@@ -1,5 +1,32 @@
 # SendToSMB 测试说明
 
+## 已执行的验证（2026-10-26，1.5.0 / 8）
+
+- 使用 JDK 17.0.20.1 构建 Release、Debug、AndroidTest APK，执行 JVM 测试和 `lintDebug`，全部成功。72 项测试全部通过，零失败、零跳过，Lint 无错误。
+- 新增 9 项纯 JVM 续传模型 / 序列化 / 保留策略测试，覆盖 Unicode 及 URI、任务计划往返、运行 / 排队 / 清理中任务恢复为暂停、超过 200 条时保留所有可续传记录，以及 UUID、路径、来源身份和哈希的验证。
+- 新增 16 项真实 SMB 协议主机测试，目标固定为 `127.0.0.1:1445/TESTSHARE` 中的临时 UUID 子目录。覆盖部分上传 / 下载后重建连接、主动关闭 TCP 连接后续传、前缀篡改、源文件后缀变化、目标冲突、提交成功后的幂等恢复、提交前异常、空文件、超长片段保护和仅清理本任务断点。元数据受限回归模拟拒绝 `READ_ATTRIBUTES`、拒绝 / 不支持 `FILE_ALL_INFO`，仍验证完整 SHA-256、续传和清理。
+- 新增 10 项引擎主机集成测试，组合真实 SMB 与磁盘上的 `content://` 文档适配器。每次重试重新从原子保存的序列化记录构建引擎，覆盖临时授权来源先缓存、来源失去权限后继续、文件夹固定清单 / 空目录 / 不重复已完成子文件、文档写入失败保留完整缓存、单文件 / 整目录重命名确认丢失、目标名称竞争，以及已完成目录 / 文件丢失或被修改时拒绝误报完成。适配器在目录重命名时使所有后代旧 URI 失效。
+- 速度测试新增续传前缀不计作本次新增字节、低偏移重复回调不重复计速的验证。既有地址、更新、文本编辑和隔离 SMB 保存测试同时回归。
+- 首轮两项主动断线用例的传输断言均通过，但测试清理因 Impacket 在 TCP EOF 后遗留文件句柄而失败。仅修正隔离服务实例的断线句柄释放，保留所有原有断线断言；独立 Python 断线 / 删除预检及后续 JVM 重跑通过。未降低应用文件权限校验，也未更改系统 SMB / 防火墙。
+- 4 项新增传输界面仪器测试已加入，后台传输测试更新为暂停保留断点。当前无手机；本机 `emulator -accel-check` 返回未安装 hypervisor 驱动，未执行设备仪器测试或真实 Android 文档提供方验收，不能把主机适配器测试当作真机运行结果。
+- 本次未访问用户真实共享；所有文件写入、重命名及清理仅发生在隔离 SMB 测试目录和测试临时文件系统中。
+- 最终 Release APK 为 16,158,367 字节，SHA-256 `557023723c4c3d265f58e8be1868564480063eb908e194994ea3cfd855d58d33`。`aapt2` 确认包名 `com.zlight.sendtosmb`、版本 `1.5.0 / 8`、最低 API 26、目标 API 36 且无 DEBUGGABLE；`apksigner` 验签通过，证书 SHA-256 `383337cdc9552808990eb825a28c6c768bc4c479663fd04b71e67f409e2329ef` 与此前版本一致。
+- EasyUpdate 已发布 `1.5.0 (8)`（应用 ID 6，后台 release ID 16）；旧版 `version_code=7` 获取更新，当前 `version_code=8` 返回已是最新。实际下载 APK 的大小和 SHA-256 与本地发布包及接口字段完全一致。测试完成后已停止本次隔离 SMB 服务。
+
+无手机复现主机验收：
+
+```powershell
+.\scripts\Start-TestSmb.ps1 -HostOnly
+$env:SENDTOSMB_RESUME_SMB_TEST = '1'
+$env:SENDTOSMB_EDITOR_SMB_TEST = '1'
+.\scripts\build.ps1 -JavaHome '你的 JDK 17 目录' -Tasks 'assembleRelease','assembleDebug','assembleDebugAndroidTest','testDebugUnitTest','lintDebug'
+.\scripts\Stop-TestSmb.ps1
+Remove-Item Env:SENDTOSMB_RESUME_SMB_TEST
+Remove-Item Env:SENDTOSMB_EDITOR_SMB_TEST
+```
+
+`Start-TestSmb.ps1 -HostOnly` 不需要 adb；可用 `-Python` 和 `-Packages` 指定 Python 及已有隔离依赖目录。两类主机 SMB 测试只在显式设置相应变量为 `1` 时运行，其目标不接受用户真实共享地址。设备可用后，还需运行 `TransfersResumeUiTest`、`BackgroundTransferTest` 并手工验证真实提供方的读取授权持久化、进程重建及保存位置重命名行为。
+
 ## 已执行的验证（2026-10-10，1.4.0 / 7）
 
 - JDK 17.0.20.1 执行 `assembleRelease`、`assembleDebug`、`assembleDebugAndroidTest`、`testDebugUnitTest` 和 `lintDebug` 全部成功，Lint 无错误。

@@ -109,7 +109,8 @@ class MainActivity : ComponentActivity() {
                     UiAction.SelectDownloadDirectory -> downloadDirectoryPicker.launch(null)
                     UiAction.ClearDownloadDirectory -> {
                         state.downloadDirectoryUri?.let { uri ->
-                            runCatching { contentResolver.releasePersistableUriPermission(android.net.Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+                            if (state.transfers.none { it.resume?.treeUri == uri })
+                                runCatching { contentResolver.releasePersistableUriPermission(android.net.Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
                         }
                         model.dispatch(action)
                     }

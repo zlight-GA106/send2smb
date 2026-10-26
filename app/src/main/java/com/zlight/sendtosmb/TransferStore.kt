@@ -16,7 +16,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 data class SavedDownloadDirectory(val uri: String, val name: String)
 
-/** Keeps terminal transfer records in private, backup-excluded, encrypted preferences. */
+/** Keeps history and resumable tasks in private, backup-excluded, encrypted preferences. */
 class TransferStore(context: Context) {
     private val prefs = context.getSharedPreferences("transfer_history", Context.MODE_PRIVATE)
     private val alias = "sendtosmb.transfers.v1"
@@ -34,13 +34,16 @@ class TransferStore(context: Context) {
     fun read(): List<UiTransfer> {
         val content = decrypt("payload", "iv") ?: return emptyList()
         val array = JSONArray(content)
-        return (0 until array.length()).map { index ->
+        return (0 until array.length()).mapNotNull { index -> runCatching {
             val item = array.getJSONObject(index)
+            val encodedResume = item.optString("resume").takeIf { it.isNotBlank() }
+            val resume = encodedResume?.let { runCatching { TransferResumeCodec.decode(it) }.getOrNull() }
+            val malformedResume = encodedResume != null && (resume == null || !TransferResumeCodec.validId(item.getString("id")))
             val source = item.optJSONObject("source")?.let {
                 UiFile(it.getString("name"), it.getString("path"), it.getBoolean("directory"),
                     it.optLong("size"), it.optLong("modified"))
             }
-            UiTransfer(
+            val transfer = UiTransfer(
                 id = item.getString("id"),
                 name = item.getString("name"),
                 direction = item.getString("direction"),
@@ -52,35 +55,39 @@ class TransferStore(context: Context) {
                 sourceFile = source,
                 profileId = item.optString("profileId").takeIf { it.isNotBlank() },
                 averageBytesPerSecond = item.optDouble("averageSpeed", 0.0),
+                resume = if (malformedResume) null else resume,
             )
-        }
+            TransferHistoryPolicy.restored(if (malformedResume) {
+                transfer.copy(status = "failed", error = "续传记录无效，请重新发起任务")
+            } else transfer)
+        }.getOrNull() }
     }
 
     fun write(transfers: List<UiTransfer>) {
         val array = JSONArray()
-        transfers.filterNot { it.status == "running" || it.status == "queued" }
-            .sortedBy { it.createdMillis }.takeLast(MAX_HISTORY).forEach { transfer ->
-                val item = JSONObject()
-                    .put("id", transfer.id)
-                    .put("name", transfer.name)
-                    .put("direction", transfer.direction)
-                    .put("done", transfer.done)
-                    .put("total", transfer.total)
-                    .put("status", transfer.status)
-                    .put("error", transfer.error ?: "")
-                    .put("created", transfer.createdMillis)
-                    .put("profileId", transfer.profileId ?: "")
-                    .put("averageSpeed", transfer.averageBytesPerSecond)
-                transfer.sourceFile?.let { source ->
-                    item.put("source", JSONObject()
-                        .put("name", source.name)
-                        .put("path", source.path)
-                        .put("directory", source.isDirectory)
-                        .put("size", source.size)
-                        .put("modified", source.modifiedMillis))
-                }
-                array.put(item)
+        TransferHistoryPolicy.forPersistence(transfers, MAX_HISTORY).forEach { transfer ->
+            val item = JSONObject()
+                .put("id", transfer.id)
+                .put("name", transfer.name)
+                .put("direction", transfer.direction)
+                .put("done", transfer.done)
+                .put("total", transfer.total)
+                .put("status", transfer.status)
+                .put("error", transfer.error ?: "")
+                .put("created", transfer.createdMillis)
+                .put("profileId", transfer.profileId ?: "")
+                .put("averageSpeed", transfer.averageBytesPerSecond)
+            transfer.resume?.let { item.put("resume", TransferResumeCodec.encode(it)) }
+            transfer.sourceFile?.let { source ->
+                item.put("source", JSONObject()
+                    .put("name", source.name)
+                    .put("path", source.path)
+                    .put("directory", source.isDirectory)
+                    .put("size", source.size)
+                    .put("modified", source.modifiedMillis))
             }
+            array.put(item)
+        }
         encrypt("payload", "iv", array.toString(), "传输记录保存失败")
     }
 

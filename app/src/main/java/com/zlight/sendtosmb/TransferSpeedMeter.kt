@@ -6,11 +6,21 @@ internal class TransferSpeedMeter(private val clock: () -> Long = System::nanoTi
     private var sampled = started
     private var sampledBytes = 0L
     private var bytes = 0L
+    private var progressHighWater: Long? = null
     var current: Double = 0.0
         private set
 
     @Synchronized fun add(delta: Long) {
         bytes += delta.coerceAtLeast(0)
+    }
+
+    /** The first callback is the verified/restored offset, not bytes sent in this attempt. */
+    @Synchronized fun recordProgress(done: Long): Long {
+        val previous = progressHighWater
+        val delta = if (previous == null) 0 else (done - previous).coerceAtLeast(0)
+        progressHighWater = maxOf(previous ?: done, done)
+        bytes += delta
+        return delta
     }
 
     @Synchronized fun sample(): Double {
